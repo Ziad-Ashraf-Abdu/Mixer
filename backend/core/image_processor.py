@@ -1,4 +1,3 @@
-# core/image_processor.py
 import numpy as np
 import cv2
 from typing import Literal
@@ -27,15 +26,17 @@ class ImageModel:
 
     def get_component(self, type_str: str):
         """Return log-scaled or raw component for visualization."""
-        if type_opt := {
-            'Magnitude': 20 * np.log(self.magnitude + 1e-9),
-            'Phase': self.phase,
-            'Real': self.real,
-            'Imaginary': self.imag,
-            'Original': self.original
-        }.get(type_str):
-            return type_opt
-        return self.original
+        # Optimized: checks string equality instead of building a dict of arrays
+        if type_str == 'Magnitude':
+            return 20 * np.log(self.magnitude + 1e-9)
+        elif type_str == 'Phase':
+            return self.phase
+        elif type_str == 'Real':
+            return self.real
+        elif type_str == 'Imaginary':
+            return self.imag
+        else:
+            return self.original
 
     def get_complex_fft(self):
         """Return the full complex FFT (shifted)."""
@@ -72,8 +73,9 @@ class MixerEngine:
         Mix 4 images using weighted FFT components and circular frequency masking.
         Returns the mixed image (real-valued).
         """
-        if not images or len(images) != 4 or len(weights) != 4:
-            raise ValueError("Exactly 4 images and 4 weight dicts required.")
+        # Ensure we have valid inputs even if list is short
+        if not images:
+            raise ValueError("No images provided for mixing.")
 
         shape = images[0].shape
         mask = MixerEngine.create_circular_mask(shape, region_type, region_size)
@@ -82,11 +84,13 @@ class MixerEngine:
             mixed_mag = np.zeros_like(images[0].magnitude)
             mixed_phase = np.zeros_like(images[0].phase)
 
-            for i in range(4):
-                w_mag = weights[i].get('magnitude', 0.0)
-                w_phase = weights[i].get('phase', 0.0)
-                mixed_mag += images[i].magnitude * w_mag
-                mixed_phase += images[i].phase * w_phase
+            for i in range(len(images)):
+                # Safety check if weights list is shorter than images
+                if i < len(weights):
+                    w_mag = weights[i].get('magnitude', 0.0)
+                    w_phase = weights[i].get('phase', 0.0)
+                    mixed_mag += images[i].magnitude * w_mag
+                    mixed_phase += images[i].phase * w_phase
 
             # Reconstruct complex FFT
             mixed_fft = mixed_mag * np.exp(1j * mixed_phase)
@@ -95,11 +99,12 @@ class MixerEngine:
             mixed_real = np.zeros_like(images[0].real)
             mixed_imag = np.zeros_like(images[0].imag)
 
-            for i in range(4):
-                w_real = weights[i].get('real', 0.0)
-                w_imag = weights[i].get('imag', 0.0)
-                mixed_real += images[i].real * w_real
-                mixed_imag += images[i].imag * w_imag
+            for i in range(len(images)):
+                if i < len(weights):
+                    w_real = weights[i].get('real', 0.0)
+                    w_imag = weights[i].get('imag', 0.0)
+                    mixed_real += images[i].real * w_real
+                    mixed_imag += images[i].imag * w_imag
 
             mixed_fft = mixed_real + 1j * mixed_imag
 

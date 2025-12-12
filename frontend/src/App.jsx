@@ -73,7 +73,7 @@ function App() {
             };
             const res = await processMix(payload, { signal: ac.signal });
             if (!ac.signal.aborted) {
-                const imageUrl = 'data:' + res.data.image;
+                const imageUrl = res.data.image;
                 if (selectedPort === 1) setOutput1(imageUrl);
                 else setOutput2(imageUrl);
             }

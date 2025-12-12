@@ -12,6 +12,11 @@
     background-color: #0a0a0c;
 }
 
+html {
+    /* Enables smooth sliding when scrolling via code/links */
+    scroll-behavior: smooth;
+}
+
 body {
     margin: 0;
     display: flex;
@@ -24,25 +29,43 @@ body {
     height: 100vh;
     margin: 0;
     padding: 0;
-    overflow: hidden; /* Prevent body scroll */
+    overflow: hidden; /* Prevent body scroll, handle inside containers */
 }
 
-/* --- GLOBAL SCROLLBARS (GRIMOIRE STYLE) --- */
+/* --- GLOBAL SCROLLBARS (GRIMOIRE STYLE v2) --- */
+
+/* 1. The Container */
 ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 10px;  /* Wider for easier grabbing */
+    height: 10px; /* Wider horizontal scrollbar */
 }
 
+/* 2. The Track (Background) */
 ::-webkit-scrollbar-track {
     background: #0f0f12;
+    border-left: 1px solid #222; /* Subtle divider */
 }
 
+/* 3. The Thumb (Handle) */
 ::-webkit-scrollbar-thumb {
-    background: #333;
-    border-radius: 3px;
-    border: 1px solid #000;
+    background: #555; /* Higher contrast grey (was #333) */
+    border-radius: 5px; /* Pill shape */
+    border: 2px solid #0f0f12; /* Creates a 'floating' look */
+    background-clip: content-box;
 }
 
+/* 4. Hover State */
 ::-webkit-scrollbar-thumb:hover {
-    background: #c5a059; /* Turn Gold on hover */
+    background: #c5a059; /* Royal Gold on hover */
+    border-color: #0f0f12;
+}
+
+/* 5. Active/Click State */
+::-webkit-scrollbar-thumb:active {
+    background: #d32f2f; /* Anti-Magic Red when clicking/dragging */
+}
+
+/* 6. Corner (where vertical meets horizontal) */
+::-webkit-scrollbar-corner {
+    background: #0f0f12;
 }

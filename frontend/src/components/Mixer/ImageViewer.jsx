@@ -20,7 +20,8 @@ const ImageViewer = ({ id, imageId, onUpload }) => {
         const loadView = async () => {
             try {
                 const res = await fetchComponent(id, componentType);
-                setDisplaySrc('data:' + res.data.image);
+                // FIX: Backend already sends "data:image/png;base64,...", so we just use it directly.
+                setDisplaySrc(res.data.image); 
             } catch (err) {
                 console.error('Failed to fetch component', err);
                 setDisplaySrc(null);
