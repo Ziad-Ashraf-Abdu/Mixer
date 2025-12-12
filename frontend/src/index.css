@@ -1,0 +1,48 @@
+/* frontend/src/index.css */
+
+/* Import the 'Cinzel' (Fantasy) and 'Lato' (Clean) fonts */
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Lato:wght@400;700&display=swap');
+
+:root {
+    font-family: 'Lato', system-ui, sans-serif;
+    line-height: 1.5;
+    font-weight: 400;
+    color-scheme: dark;
+    color: #e0e0e0;
+    background-color: #0a0a0c;
+}
+
+body {
+    margin: 0;
+    display: flex;
+    min-width: 320px;
+    min-height: 100vh;
+}
+
+#root {
+    width: 100%;
+    height: 100vh;
+    margin: 0;
+    padding: 0;
+    overflow: hidden; /* Prevent body scroll */
+}
+
+/* --- GLOBAL SCROLLBARS (GRIMOIRE STYLE) --- */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #0f0f12;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 3px;
+    border: 1px solid #000;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #c5a059; /* Turn Gold on hover */
+}
