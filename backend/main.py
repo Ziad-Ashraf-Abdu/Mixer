@@ -1,4 +1,5 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+# main.py
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from core.image_processor import ImageModel, MixerEngine
@@ -6,7 +7,6 @@ from core.beamformer import PhasedArray
 import numpy as np
 import base64
 import cv2
-import io
 
 app = FastAPI()
 
@@ -18,164 +18,149 @@ app.add_middleware(
 )
 
 # --- In-Memory Storage ---
-uploaded_images = {} # {id: ImageModel}
+uploaded_images = {}  # {0: ImageModel, 1: ..., 3: ...}
 
-# --- Pydantic Models for Request Bodies ---
+# --- Pydantic Models ---
 class ComponentRequest(BaseModel):
     id: int
     type_str: str
 
 class MixRequest(BaseModel):
-    weights: list[dict] # [{'magnitude': 0.5, 'phase': 0.1}, ...]
-    region_type: str    # 'inner' or 'outer'
-    region_size: float  # 0.0 to 1.0
+    weights: list[dict]
+    region_type: str
+    region_size: float
+    mix_mode: str = 'mag-phase'  # 'mag-phase' or 'real-imag'
 
 class BeamRequest(BaseModel):
-    count: int
-    geo: str
-    curve: int
-    steering: float
-    scenario: str
+    arrays: list[dict]  # Each: {count, geo, curve, steering, x, y}
+    resolution: int = 100
+
+# --- Helper: Create blank image ---
+def _create_blank_image_model():
+    blank = np.zeros((256, 256), dtype=np.uint8)
+    _, buf = cv2.imencode('.png', blank)
+    return ImageModel(buf.tobytes())
 
 # --- Endpoints ---
-
 @app.post("/upload/{img_id}")
 async def upload_image(img_id: int, file: UploadFile = File(...)):
+    if img_id not in [0, 1, 2, 3]:
+        raise HTTPException(status_code=400, detail="img_id must be 0-3")
     try:
         contents = await file.read()
-        # Create ImageModel (Force resize to 256x256 for this task to ensure uniformity)
-        img_model = ImageModel(contents, target_size=(256, 256))
+        img_model = ImageModel(contents)
         uploaded_images[img_id] = img_model
         return {"status": "success", "shape": img_model.shape}
     except Exception as e:
-        print(f"Error uploading: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/get_component")
 async def get_component_view(req: ComponentRequest):
-    """
-    Returns a visual representation (PNG base64) of a specific FT component.
-    """
-    if req.id not in uploaded_images:
-        raise HTTPException(status_code=404, detail="Image not found")
+    if req.id not in [0, 1, 2, 3]:
+        raise HTTPException(status_code=400, detail="id must be 0-3")
+    img_model = uploaded_images.get(req.id)
+    if img_model is None:
+        # Return blank if not uploaded
+        img_model = _create_blank_image_model()
     
-    img_model = uploaded_images[req.id]
-    
-    # 1. Get raw data (Magnitude, Phase, etc.)
     raw_data = img_model.get_component(req.type_str)
+    raw_data = np.nan_to_num(raw_data, nan=0.0, posinf=0.0, neginf=0.0)
     
-    # 2. Normalize to 0-255 for display
-    # (Log scale is already applied in get_component for Mag/Real/Imag)
-    if raw_data is None:
-         raise HTTPException(status_code=500, detail="Processing failed")
-
-    # Handle NaN/Inf
-    raw_data = np.nan_to_num(raw_data)
-    
-    # Normalize min-max to 0-255
-    min_val = np.min(raw_data)
-    max_val = np.max(raw_data)
-    
-    if max_val - min_val == 0:
-        norm_img = np.zeros_like(raw_data, dtype=np.uint8)
+    if raw_data.dtype != np.uint8:
+        norm = cv2.normalize(raw_data, None, 0, 255, cv2.NORM_MINMAX)
+        disp_img = np.uint8(norm)
     else:
-        norm_img = cv2.normalize(raw_data, None, 0, 255, cv2.NORM_MINMAX)
-        norm_img = np.uint8(norm_img)
+        disp_img = raw_data
 
-    # 3. Encode to PNG -> Base64
-    _, buffer = cv2.imencode('.png', norm_img)
-    b64_str = base64.b64encode(buffer).decode('utf-8')
-    
-    return {"image": f"data:image/png;base64,{b64_str}"}
+    _, buffer = cv2.imencode('.png', disp_img)
+    b64 = base64.b64encode(buffer).decode()
+    return {"image": f"data:image/png;base64,{b64}"}
 
 @app.post("/process_mix")
 async def mix_request(data: MixRequest):
     try:
-        # 1. Generate Region Mask
-        size = 256
-        mask = np.zeros((size, size))
-        cx, cy = size//2, size//2
-        r_size = int(data.region_size * (size/2)) 
-        
-        # Ensure radius is at least 1
-        r_size = max(1, r_size)
-        
-        if data.region_type == 'inner':
-            # Low frequencies (center)
-            mask[cy-r_size:cy+r_size, cx-r_size:cx+r_size] = 1
-        else:
-            # High frequencies (outer)
-            mask = np.ones((size, size))
-            mask[cy-r_size:cy+r_size, cx-r_size:cx+r_size] = 0
-            
-        # 2. Get Valid Images
-        # We need to filter out slots that haven't been uploaded yet
-        imgs = []
-        valid_weights = []
-        
+        # Ensure 4 images (use blank if missing)
+        images = []
         for i in range(4):
-            if i in uploaded_images:
-                imgs.append(uploaded_images[i])
-                valid_weights.append(data.weights[i])
-            else:
-                # If image missing, we can treat it as zero-energy or skip
-                # For simplicity, we skip, but indices must align. 
-                # Better approach: pass blank image. 
-                pass
+            images.append(uploaded_images.get(i, _create_blank_image_model()))
 
-        if not imgs: 
-             return {"error": "No images uploaded"}
-        
-        # 3. Mix
-        # Note: We need to pass the weights corresponding to existing images
-        # But for this specific task, we usually assume 4 slots. 
-        # Let's handle the case where user only uploaded Image 0 and 1.
-        
-        # Create a temporary list of 4 images (blanks if missing) to match weights indices
-        full_imgs = []
-        for i in range(4):
-            if i in uploaded_images:
-                full_imgs.append(uploaded_images[i])
-            else:
-                # Create a dummy blank image model
-                blank = np.zeros((256, 256), dtype=np.uint8)
-                dummy = ImageModel(cv2.imencode('.png', blank)[1].tobytes())
-                full_imgs.append(dummy)
+        # Mix
+        result = MixerEngine.mix_images(
+            images=images,
+            weights=data.weights,
+            region_type=data.region_type,
+            region_size=data.region_size,
+            mix_mode=data.mix_mode
+        )
 
-        result = MixerEngine.mix_images(full_imgs, data.weights, mask)
-        
-        # 4. Encode result
+        # Encode result
         norm_res = cv2.normalize(result, None, 0, 255, cv2.NORM_MINMAX)
         _, buffer = cv2.imencode('.png', np.uint8(norm_res))
-        b64_str = base64.b64encode(buffer).decode('utf-8')
-        return {"image": f"data:image/png;base64,{b64_str}"}
-
+        b64 = base64.b64encode(buffer).decode()
+        return {"image": f"data:image/png;base64,{b64}"}
     except Exception as e:
-        print(f"Mixing error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/simulate_beam")
 async def beam_request(config: BeamRequest):
     try:
-        array = PhasedArray(
-            num_elements=config.count, 
-            geometry=config.geo, 
-            curvature=config.curve
-        )
-        field = array.calculate_interference_map(config.steering)
-        
-        # Normalize for visualization (0-255)
-        # Use a colormap for better visualization (Hot/Jet)
-        norm = cv2.normalize(field, None, 0, 255, cv2.NORM_MINMAX)
-        norm = np.uint8(norm)
-        
-        # Apply colormap
-        colored = cv2.applyColorMap(norm, cv2.COLORMAP_JET)
+        # Create grid (20m x 20m)
+        res = config.resolution
+        x = np.linspace(-10, 10, res)
+        y = np.linspace(0, 20, res)
+        X, Y = np.meshgrid(x, y)
+
+        total_field = np.zeros_like(X, dtype=np.complex128)
+
+        # Sum field from all arrays
+        for arr_cfg in config.arrays:
+            array = PhasedArray(
+                num_elements=arr_cfg['count'],
+                geometry=arr_cfg['geo'],
+                curvature=arr_cfg.get('curve', 0),
+                position=(arr_cfg.get('x', 0.0), arr_cfg.get('y', 0.0))
+            )
+            field = array.calculate_interference_map(
+                steering_angle_deg=arr_cfg['steering'],
+                grid_x=X,
+                grid_y=Y
+            )
+            total_field += field
+
+        # Magnitude for visualization
+        magnitude = np.abs(total_field)
+        norm = cv2.normalize(magnitude, None, 0, 255, cv2.NORM_MINMAX)
+        colored = cv2.applyColorMap(np.uint8(norm), cv2.COLORMAP_JET)
         
         _, buffer = cv2.imencode('.png', colored)
-        b64_str = base64.b64encode(buffer).decode('utf-8')
-        return {"map": f"data:image/png;base64,{b64_str}"}
-        
+        b64 = base64.b64encode(buffer).decode()
+        return {"map": f"data:image/png;base64,{b64}"}
     except Exception as e:
-        print(f"Beam error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/get_beam_profile")
+async def get_beam_profile(config: BeamRequest):
+    """Return 1D beam pattern for the first array (for now)."""
+    try:
+        if not config.arrays:
+            raise ValueError("No arrays provided")
+        arr = config.arrays[0]
+        angles = np.linspace(-90, 90, 181)
+        af_angles, af_power = PhasedArray.compute_array_factor(
+            num_elements=arr['count'],
+            steering_angle_deg=arr['steering'],
+            test_angles_deg=angles,
+            geometry=arr['geo'],
+            curvature=arr.get('curve', 0)
+        )
+        # Normalize to [0, 255] for simple line plot (or return raw data)
+        power_norm = (af_power - af_power.min()) / (af_power.max() - af_power.min() + 1e-9)
+        plot_data = (255 * (1 - power_norm)).astype(np.uint8)  # Invert for bright peak
+
+        # Create 1D image: 181x100
+        plot_img = np.tile(plot_data[:, None], (1, 100)).T  # Shape: (100, 181)
+        _, buffer = cv2.imencode('.png', plot_img)
+        b64 = base64.b64encode(buffer).decode()
+        return {"profile": f"data:image/png;base64,{b64}"}
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

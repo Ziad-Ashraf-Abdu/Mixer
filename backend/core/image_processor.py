@@ -1,68 +1,117 @@
+# core/image_processor.py
 import numpy as np
 import cv2
-
+from typing import Literal
 
 class ImageModel:
-    def __init__(self, file_bytes: bytes, target_size: tuple = None):
-        # [cite_start]1. Decode & Convert to Grayscale [cite: 7]
+    def __init__(self, file_bytes: bytes, target_size: tuple = (256, 256)):
+        # Decode and convert to grayscale
         nparr = np.frombuffer(file_bytes, np.uint8)
-        self.original = cv2.imdecode(nparr, cv2.IMREAD_GRAYSCALE)
-
-        # [cite_start]2. Resize Logic (Unified Size) [cite: 8]
-        if target_size:
-            self.original = cv2.resize(self.original, target_size)
-
+        img = cv2.imdecode(nparr, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            raise ValueError("Invalid image file")
+        
+        # Resize to target (ensures uniformity)
+        self.original = cv2.resize(img, target_size)
         self.shape = self.original.shape
 
-        # [cite_start]3. Precompute FFT Components [cite: 9]
-        self.fft_data = np.fft.fftshift(np.fft.fft2(self.original))
-        self.magnitude = np.abs(self.fft_data)
-        self.phase = np.angle(self.fft_data)
-        self.real = np.real(self.fft_data)
-        self.imag = np.imag(self.fft_data)
+        # Compute FFT (shifted for centering low frequencies)
+        fft_full = np.fft.fft2(self.original)
+        self.fft_shifted = np.fft.fftshift(fft_full)
+
+        # Extract components
+        self.magnitude = np.abs(self.fft_shifted)
+        self.phase = np.angle(self.fft_shifted)
+        self.real = np.real(self.fft_shifted)
+        self.imag = np.imag(self.fft_shifted)
 
     def get_component(self, type_str: str):
-        if type_str == 'Magnitude': return 20 * np.log(self.magnitude + 1)  # Log scale for view
-        if type_str == 'Phase': return self.phase
-        if type_str == 'Real': return 20 * np.log(np.abs(self.real) + 1)
-        if type_str == 'Imaginary': return np.log(np.abs(self.imag) + 1)
+        """Return log-scaled or raw component for visualization."""
+        if type_opt := {
+            'Magnitude': 20 * np.log(self.magnitude + 1e-9),
+            'Phase': self.phase,
+            'Real': self.real,
+            'Imaginary': self.imag,
+            'Original': self.original
+        }.get(type_str):
+            return type_opt
         return self.original
+
+    def get_complex_fft(self):
+        """Return the full complex FFT (shifted)."""
+        return self.fft_shifted.copy()
 
 
 class MixerEngine:
     @staticmethod
-    def mix_images(images: list[ImageModel], weights: list[dict], region_mask: np.ndarray):
+    def create_circular_mask(shape, region_type: str, region_size: float):
+        """Create a circular mask for inner (low-freq) or outer (high-freq) region."""
+        h, w = shape
+        center = (h // 2, w // 2)
+        max_radius = min(center)
+        radius = max(1, int(region_size * max_radius))
+
+        Y, X = np.ogrid[:h, :w]
+        dist_from_center = np.sqrt((X - center[1])**2 + (Y - center[0])**2)
+
+        if region_type == 'inner':
+            mask = dist_from_center <= radius
+        else:  # 'outer'
+            mask = dist_from_center > radius
+        return mask.astype(np.float32)
+
+    @staticmethod
+    def mix_images(
+        images: list[ImageModel],
+        weights: list[dict],
+        region_type: str,
+        region_size: float,
+        mix_mode: Literal['mag-phase', 'real-imag'] = 'mag-phase'
+    ):
         """
-        Mixes 4 images based on weights and applies region filtering.
-        weights format: [{'mag': 0.5, 'phase': 0}, ...] for each image
+        Mix 4 images using weighted FFT components and circular frequency masking.
+        Returns the mixed image (real-valued).
         """
-        final_fft = np.zeros_like(images[0].fft_data, dtype=np.complex128)
+        if not images or len(images) != 4 or len(weights) != 4:
+            raise ValueError("Exactly 4 images and 4 weight dicts required.")
 
-        # [cite_start]Accumulate weighted components [cite: 16]
-        mixed_mag = np.zeros_like(images[0].magnitude)
-        mixed_phase = np.zeros_like(images[0].phase)
+        shape = images[0].shape
+        mask = MixerEngine.create_circular_mask(shape, region_type, region_size)
 
-        for i, img in enumerate(images):
-            w_mag = weights[i]['magnitude']
-            w_phase = weights[i]['phase']
+        if mix_mode == 'mag-phase':
+            mixed_mag = np.zeros_like(images[0].magnitude)
+            mixed_phase = np.zeros_like(images[0].phase)
 
-            # Simplification for mixing: We mix mag and phase separately then combine
-            # (Note: Strictly mixing Real/Imag is linear, Mag/Phase is non-linear)
-            mixed_mag += img.magnitude * w_mag
-            mixed_phase += img.phase * w_phase
+            for i in range(4):
+                w_mag = weights[i].get('magnitude', 0.0)
+                w_phase = weights[i].get('phase', 0.0)
+                mixed_mag += images[i].magnitude * w_mag
+                mixed_phase += images[i].phase * w_phase
 
-        # [cite_start]Region Mixing (Inner vs Outer) [cite: 20]
-        # We apply the mask to decide which frequencies pass.
-        # This implementation assumes the mask determines the "active" zone for this mix.
+            # Reconstruct complex FFT
+            mixed_fft = mixed_mag * np.exp(1j * mixed_phase)
 
-        # Reconstruct Complex FFT
-        final_fft = mixed_mag * np.exp(1j * mixed_phase)
+        elif mix_mode == 'real-imag':
+            mixed_real = np.zeros_like(images[0].real)
+            mixed_imag = np.zeros_like(images[0].imag)
 
-        # Apply Region Mask (1 for pass, 0 for stop)
-        # Note: In a full mixer, you might mix Region A from Image 1 and Region B from Image 2.
-        # Here we apply the result mask.
-        final_fft = final_fft * region_mask
+            for i in range(4):
+                w_real = weights[i].get('real', 0.0)
+                w_imag = weights[i].get('imag', 0.0)
+                mixed_real += images[i].real * w_real
+                mixed_imag += images[i].imag * w_imag
 
-        # [cite_start]Inverse FFT [cite: 16]
-        result = np.fft.ifft2(np.fft.ifftshift(final_fft))
-        return np.abs(result)
+            mixed_fft = mixed_real + 1j * mixed_imag
+
+        else:
+            raise ValueError("mix_mode must be 'mag-phase' or 'real-imag'")
+
+        # Apply region mask
+        mixed_fft_masked = mixed_fft * mask
+
+        # Inverse FFT
+        fft_unshifted = np.fft.ifftshift(mixed_fft_masked)
+        reconstructed = np.fft.ifft2(fft_unshifted)
+        result = np.abs(reconstructed)  # Ensure real output
+
+        return result
