@@ -7,6 +7,12 @@ from core.beamformer import PhasedArray
 import numpy as np
 import base64
 import cv2
+import matplotlib
+import io
+
+# Set Matplotlib to non-interactive mode (crucial for servers)
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 app = FastAPI()
 
@@ -18,7 +24,7 @@ app.add_middleware(
 )
 
 # --- In-Memory Storage ---
-uploaded_images = {}  # {0: ImageModel, 1: ..., 3: ...}
+uploaded_images = {}
 
 # --- Pydantic Models ---
 class ComponentRequest(BaseModel):
@@ -30,13 +36,13 @@ class MixRequest(BaseModel):
     region_type: str
     region_width: float
     region_height: float
-    region_x: float # Center X (0-1)
-    region_y: float # Center Y (0-1)
+    region_x: float
+    region_y: float
     mix_mode: str = 'mag-phase'
 
 class BeamRequest(BaseModel):
     arrays: list[dict]
-    resolution: int = 100
+    resolution: int = 300  # High resolution for map
 
 # --- Helper: Create blank image ---
 def _create_blank_image_model():
@@ -45,6 +51,7 @@ def _create_blank_image_model():
     return ImageModel(buf.tobytes())
 
 # --- Endpoints ---
+
 @app.post("/upload/{img_id}")
 async def upload_image(img_id: int, file: UploadFile = File(...)):
     if img_id not in [0, 1, 2, 3]:
@@ -103,22 +110,28 @@ async def mix_request(data: MixRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# --- BEAMFORMING ENDPOINTS ---
+
 @app.post("/simulate_beam")
 async def beam_request(config: BeamRequest):
     try:
-        res = config.resolution
+        res = config.resolution 
         x = np.linspace(-10, 10, res)
         y = np.linspace(0, 20, res)
         X, Y = np.meshgrid(x, y)
 
-        total_field = np.zeros_like(X, dtype=np.complex128)
+        total_field = np.zeros_like(X, dtype=np.float64)
 
         for arr_cfg in config.arrays:
+            # Normalize curvature
+            curve_val = arr_cfg.get('curve', 0) / 500.0 
+            
             array = PhasedArray(
                 num_elements=arr_cfg['count'],
                 geometry=arr_cfg['geo'],
-                curvature=arr_cfg.get('curve', 0),
-                position=(arr_cfg.get('x', 0.0), arr_cfg.get('y', 0.0))
+                curvature=curve_val,
+                position=(arr_cfg.get('x', 0.0), arr_cfg.get('y', 0.0)),
+                frequency=1e8
             )
             field = array.calculate_interference_map(
                 steering_angle_deg=arr_cfg['steering'],
@@ -127,9 +140,14 @@ async def beam_request(config: BeamRequest):
             )
             total_field += field
 
-        magnitude = np.abs(total_field)
-        norm = cv2.normalize(magnitude, None, 0, 255, cv2.NORM_MINMAX)
+        abs_field = np.abs(total_field)
+        log_field = np.log1p(abs_field)
+        
+        norm = cv2.normalize(log_field, None, 0, 255, cv2.NORM_MINMAX)
         colored = cv2.applyColorMap(np.uint8(norm), cv2.COLORMAP_JET)
+        
+        # Flip to correct orientation
+        colored = cv2.flip(colored, 0)
         
         _, buffer = cv2.imencode('.png', colored)
         b64 = base64.b64encode(buffer).decode()
@@ -143,20 +161,50 @@ async def get_beam_profile(config: BeamRequest):
         if not config.arrays:
             raise ValueError("No arrays provided")
         arr = config.arrays[0]
-        angles = np.linspace(-90, 90, 181)
-        af_angles, af_power = PhasedArray.compute_array_factor(
+        
+        angles_deg = np.linspace(-90, 90, 360)
+        
+        curve_val = arr.get('curve', 0) / 500.0
+        
+        _, af_mag = PhasedArray.compute_array_factor(
             num_elements=arr['count'],
             steering_angle_deg=arr['steering'],
-            test_angles_deg=angles,
+            test_angles_deg=angles_deg,
             geometry=arr['geo'],
-            curvature=arr.get('curve', 0)
+            curvature=curve_val,
+            frequency=1e8
         )
-        power_norm = (af_power - af_power.min()) / (af_power.max() - af_power.min() + 1e-9)
-        plot_data = (255 * (1 - power_norm)).astype(np.uint8)
-
-        plot_img = np.tile(plot_data[:, None], (1, 100)).T
-        _, buffer = cv2.imencode('.png', plot_img)
-        b64 = base64.b64encode(buffer).decode()
+        
+        # --- Generate LARGE Polar Plot ---
+        # Increased figsize to (6,6) for a larger, clearer graph
+        fig = plt.figure(figsize=(6, 6), dpi=100) 
+        ax = fig.add_subplot(111, polar=True)
+        
+        theta = np.radians(angles_deg)
+        
+        ax.set_theta_zero_location("N")
+        ax.set_theta_direction(-1) 
+        ax.set_thetamin(-90)
+        ax.set_thetamax(90)
+        
+        norm_mag = af_mag / (np.max(af_mag) + 1e-9)
+        ax.plot(theta, norm_mag, color='#00FFFF', linewidth=2.5) # Cyan color, thicker line
+        
+        # Styling
+        fig.patch.set_facecolor('#050505') 
+        ax.set_facecolor('#111')       
+        ax.tick_params(axis='x', colors='white', labelsize=8)
+        ax.tick_params(axis='y', colors='white', labelsize=8)
+        ax.spines['polar'].set_visible(False)
+        ax.grid(color='gray', linestyle=':', alpha=0.3)
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', facecolor=fig.get_facecolor())
+        buf.seek(0)
+        plt.close(fig)
+        
+        b64 = base64.b64encode(buf.read()).decode()
         return {"profile": f"data:image/png;base64,{b64}"}
     except Exception as e:
+        print(e)
         raise HTTPException(status_code=500, detail=str(e))

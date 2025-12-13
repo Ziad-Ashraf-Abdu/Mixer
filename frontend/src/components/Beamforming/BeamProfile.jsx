@@ -1,38 +1,52 @@
-// components/Beamforming/BeamProfile.jsx
-import React from 'react';
+import React from "react";
 
-const BeamProfile = ({ profileImage, isLoading }) => {
-    return (
-        <div style={{
-            height: '200px',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            background: '#050505',
-            border: '1px solid #333',
-            position: 'relative',
-            overflow: 'hidden'
-        }}>
-            {profileImage ? (
-                <img
-                    src={profileImage}
-                    alt="Beam Pattern"
-                    style={{ height: '100%', width: 'auto', objectFit: 'contain' }}
-                />
-            ) : (
-                <span style={{ color: '#444', fontFamily: 'Cinzel', fontSize: '0.8rem' }}>
-                    {isLoading ? 'Loading beam profile...' : 'Adjust array to see pattern'}
-                </span>
-            )}
-            <div style={{
-                position: 'absolute', top: 0, left: 0, right: 0,
-                background: 'rgba(0,0,0,0.7)', padding: '3px 8px', fontSize: '0.65rem',
-                color: '#c5a059', fontFamily: 'Cinzel', textAlign: 'center'
-            }}>
-                BEAM PROFILE (AZIMUTH)
-            </div>
-        </div>
-    );
+const BeamProfile = ({ profileImage }) => {
+  return (
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        background: "#050505",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        border: "1px solid #333",
+        position: "relative",
+      }}
+    >
+      {profileImage ? (
+        <img
+          src={profileImage}
+          alt="Beam Profile"
+          style={{
+            maxWidth: "95%",
+            maxHeight: "95%",
+            objectFit: "contain",
+            filter: "drop-shadow(0 0 10px rgba(0,255,255,0.3))",
+          }}
+        />
+      ) : (
+        <span
+          style={{ color: "#444", fontFamily: "Cinzel", fontSize: "0.8rem" }}
+        >
+          INITIALIZING SENSORS...
+        </span>
+      )}
+
+      <div
+        style={{
+          position: "absolute",
+          top: 5,
+          left: 10,
+          color: "#c5a059",
+          fontFamily: "Cinzel",
+          fontSize: "0.7rem",
+        }}
+      >
+        BEAM PATTERN
+      </div>
+    </div>
+  );
 };
 
 export default BeamProfile;
