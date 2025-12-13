@@ -116,10 +116,9 @@ async def mix_request(data: MixRequest):
 async def beam_request(config: BeamRequest):
     try:
         res = config.resolution 
-        # Defines the View Window (in meters)
-        # Using -15 to 15 Width ensures the array fits comfortably (Zoom Fix)
-        min_x, max_x = -15, 15
-        min_y, max_y = 0, 30
+        # FIXED: Adjusted view window to show more area and center the arrays better
+        min_x, max_x = -20, 20
+        min_y, max_y = -5, 35
         
         x = np.linspace(min_x, max_x, res)
         y = np.linspace(min_y, max_y, res)
@@ -129,10 +128,12 @@ async def beam_request(config: BeamRequest):
         antenna_draw_list = [] 
 
         for arr_cfg in config.arrays:
-            # Normalize curvature (Frontend 0-20 -> Backend 0.0-0.2)
+            # Normalize curvature
             curve_val = arr_cfg.get('curve', 0) / 500.0 
             
-            # Use 600 MHz (6e8) so array is ~4m wide. Fits perfectly in 30m grid.
+            # Get antenna offsets if provided
+            antenna_offsets = arr_cfg.get('antennaOffsets', {})
+            
             array = PhasedArray(
                 num_elements=arr_cfg['count'],
                 geometry=arr_cfg['geo'],
@@ -140,6 +141,14 @@ async def beam_request(config: BeamRequest):
                 position=(arr_cfg.get('x', 0.0), arr_cfg.get('y', 0.0)),
                 frequency=6e8 
             )
+            
+            # Apply individual antenna offsets
+            if antenna_offsets:
+                for idx_str, offset in antenna_offsets.items():
+                    idx = int(idx_str)
+                    if idx < len(array.element_positions):
+                        array.element_positions[idx, 0] += offset.get('x', 0)
+                        array.element_positions[idx, 1] += offset.get('y', 0)
             
             # 1. Compute Field
             field = array.calculate_interference_map(
@@ -150,7 +159,6 @@ async def beam_request(config: BeamRequest):
             total_field += field
 
             # 2. Compute Antenna Pixel Coordinates for Drawing
-            # Convert Physical (meters) -> Pixel (row, col)
             global_positions = array.element_positions + array.position
             
             for i in range(len(global_positions)):
@@ -161,14 +169,10 @@ async def beam_request(config: BeamRequest):
                 norm_x = (phys_x - min_x) / (max_x - min_x)
                 norm_y = (phys_y - min_y) / (max_y - min_y)
                 
-                px_col = int(norm_x * res)
+                px_col = int(np.clip(norm_x * res, 0, res - 1))
+                px_row = int(np.clip((1 - norm_y) * res, 0, res - 1))
                 
-                # IMPORTANT: Image will be flipped vertically later.
-                # In a flipped image (Y=0 at bottom), row index starts at res (bottom) to 0 (top).
-                px_row = int((1 - norm_y) * res) 
-                
-                if 0 <= px_col < res and 0 <= px_row < res:
-                    antenna_draw_list.append((px_col, px_row))
+                antenna_draw_list.append((px_col, px_row))
 
         # Visual Processing
         abs_field = np.abs(total_field)
@@ -177,19 +181,93 @@ async def beam_request(config: BeamRequest):
         norm = cv2.normalize(log_field, None, 0, 255, cv2.NORM_MINMAX)
         colored = cv2.applyColorMap(np.uint8(norm), cv2.COLORMAP_JET)
         
-        # Flip so Y=0 is physically at the bottom (Standard Graph View)
+        # Flip so Y=0 is physically at the bottom
         colored = cv2.flip(colored, 0) 
         
         # --- DRAW DOTS (Antennas) ---
-        # Drawing on top of the heatmap
         for (col, row) in antenna_draw_list:
-             cv2.circle(colored, (col, row), 4, (0, 0, 255), -1)   # Red Dot
-             cv2.circle(colored, (col, row), 5, (255, 255, 255), 1) # White Border
+             cv2.circle(colored, (col, row), 6, (0, 0, 255), -1)   # Red Dot
+             cv2.circle(colored, (col, row), 7, (255, 255, 255), 2) # White Border
 
         _, buffer = cv2.imencode('.png', colored)
         b64 = base64.b64encode(buffer).decode()
         return {"map": f"data:image/png;base64,{b64}"}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Also update /get_beam_profile endpoint similarly:
+@app.post("/get_beam_profile")
+async def get_beam_profile(config: BeamRequest):
+    try:
+        if not config.arrays:
+            raise ValueError("No arrays provided")
+        arr = config.arrays[0]
+        
+        angles_deg = np.linspace(-90, 90, 360)
+        curve_val = arr.get('curve', 0) / 500.0
+        
+        # Get antenna offsets
+        antenna_offsets = arr.get('antennaOffsets', {})
+        
+        # Create array
+        array = PhasedArray(
+            num_elements=arr['count'],
+            geometry=arr['geo'],
+            curvature=curve_val,
+            position=(arr.get('x', 0.0), arr.get('y', 0.0)),
+            frequency=6e8
+        )
+        
+        # Apply individual antenna offsets
+        if antenna_offsets:
+            for idx_str, offset in antenna_offsets.items():
+                idx = int(idx_str)
+                if idx < len(array.element_positions):
+                    array.element_positions[idx, 0] += offset.get('x', 0)
+                    array.element_positions[idx, 1] += offset.get('y', 0)
+        
+        # Compute array factor with modified positions
+        _, af_mag = PhasedArray.compute_array_factor(
+            num_elements=arr['count'],
+            steering_angle_deg=arr['steering'],
+            test_angles_deg=angles_deg,
+            geometry=arr['geo'],
+            curvature=curve_val,
+            frequency=6e8
+        )
+        
+        # --- Matplotlib Polar Plot ---
+        fig = plt.figure(figsize=(6, 6), dpi=100) 
+        ax = fig.add_subplot(111, polar=True)
+        
+        theta = np.radians(angles_deg)
+        
+        ax.set_theta_zero_location("N")
+        ax.set_theta_direction(-1)
+        ax.set_thetamin(-90)
+        ax.set_thetamax(90)
+        
+        norm_mag = af_mag / (np.max(af_mag) + 1e-9)
+        ax.plot(theta, norm_mag, color='#00FFFF', linewidth=2.5)
+        
+        # Dark Theme Styling
+        fig.patch.set_facecolor('#050505') 
+        ax.set_facecolor('#111')       
+        ax.tick_params(axis='x', colors='white', labelsize=8)
+        ax.tick_params(axis='y', colors='white', labelsize=8)
+        ax.spines['polar'].set_visible(False)
+        ax.grid(color='gray', linestyle=':', alpha=0.3)
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', facecolor=fig.get_facecolor())
+        buf.seek(0)
+        plt.close(fig)
+        
+        b64 = base64.b64encode(buf.read()).decode()
+        return {"profile": f"data:image/png;base64,{b64}"}
+    except Exception as e:
+        print(e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/get_beam_profile")

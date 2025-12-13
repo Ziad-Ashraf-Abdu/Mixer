@@ -6,9 +6,11 @@ const ArrayConfig = ({
   setArrays,
   activeArrayIndex,
   setActiveArrayIndex,
+  selectedAntennaIndex,
+  setSelectedAntennaIndex,
 }) => {
-  // --- New State for Highlighter ---
   const [activeScenario, setActiveScenario] = useState(null);
+  const [showAntennaList, setShowAntennaList] = useState(false);
 
   const addArray = () => {
     setArrays((prev) => [
@@ -20,6 +22,7 @@ const ArrayConfig = ({
         steering: 0,
         x: 0,
         y: 0,
+        antennaOffsets: {}, // Store individual antenna offsets {index: {x, y}}
         id: Date.now(),
       },
     ]);
@@ -31,6 +34,7 @@ const ArrayConfig = ({
     setArrays(newArrays);
     if (activeArrayIndex >= newArrays.length)
       setActiveArrayIndex(newArrays.length - 1);
+    setSelectedAntennaIndex(null);
   };
 
   const updateArray = (field, value) => {
@@ -41,9 +45,21 @@ const ArrayConfig = ({
     );
   };
 
+  const updateAntennaOffset = (antennaIdx, axis, value) => {
+    setArrays((prev) =>
+      prev.map((a, i) => {
+        if (i !== activeArrayIndex) return a;
+        const offsets = { ...a.antennaOffsets };
+        if (!offsets[antennaIdx]) offsets[antennaIdx] = { x: 0, y: 0 };
+        offsets[antennaIdx][axis] = value;
+        return { ...a, antennaOffsets: offsets };
+      })
+    );
+  };
+
   const loadScenario = (name) => {
-    setActiveScenario(name); // Set Active State
-    const base = { id: Date.now() };
+    setActiveScenario(name);
+    const base = { id: Date.now(), antennaOffsets: {} };
     if (name === "5G") {
       setArrays([
         {
@@ -82,11 +98,15 @@ const ArrayConfig = ({
       ]);
     }
     setActiveArrayIndex(0);
+    setSelectedAntennaIndex(null);
   };
 
   const current = arrays[activeArrayIndex] || {};
+  const currentAntennaOffset =
+    selectedAntennaIndex !== null
+      ? current.antennaOffsets?.[selectedAntennaIndex] || { x: 0, y: 0 }
+      : { x: 0, y: 0 };
 
-  // Updated Style Function: checks 'isActive' param
   const btnStyle = (isActive) => ({
     flex: 1,
     padding: "6px",
@@ -94,15 +114,27 @@ const ArrayConfig = ({
     border: "1px solid #333",
     cursor: "pointer",
     fontFamily: "Cinzel",
-    background: isActive ? "#d32f2f" : "#111", // Highlights RED if active
+    background: isActive ? "#d32f2f" : "#111",
     color: isActive ? "#fff" : "#666",
     transition: "all 0.3s",
     clipPath: "polygon(10% 0, 100% 0, 90% 100%, 0 100%)",
   });
 
+  const antennaBtnStyle = (isSelected) => ({
+    padding: "4px 8px",
+    fontSize: "0.6rem",
+    border: "1px solid #333",
+    background: isSelected ? "#c5a059" : "#1a1a1a",
+    color: isSelected ? "#000" : "#999",
+    cursor: "pointer",
+    fontFamily: "Cinzel",
+    transition: "all 0.2s",
+  });
+
   return (
     <div
       style={{
+        width: "280px",
         height: "100%",
         display: "flex",
         flexDirection: "column",
@@ -145,7 +177,6 @@ const ArrayConfig = ({
             SPELL PRESETS
           </div>
           <div style={{ display: "flex", gap: "4px" }}>
-            {/* Pass isActive boolean */}
             <button
               style={btnStyle(activeScenario === "5G")}
               onClick={() => loadScenario("5G")}
@@ -183,7 +214,10 @@ const ArrayConfig = ({
             {arrays.map((a, i) => (
               <button
                 key={a.id}
-                onClick={() => setActiveArrayIndex(i)}
+                onClick={() => {
+                  setActiveArrayIndex(i);
+                  setSelectedAntennaIndex(null);
+                }}
                 style={{
                   padding: "4px 8px",
                   fontSize: "0.6rem",
@@ -227,7 +261,7 @@ const ArrayConfig = ({
           </div>
         </div>
 
-        {/* Parameters for Active Array */}
+        {/* ARRAY PARAMETERS */}
         {arrays.length > 0 && (
           <div
             style={{
@@ -235,8 +269,22 @@ const ArrayConfig = ({
               padding: "10px",
               border: "1px solid #333",
               borderRadius: "4px",
+              marginBottom: "15px",
             }}
           >
+            <div
+              style={{
+                fontSize: "0.7rem",
+                color: "#c5a059",
+                marginBottom: "10px",
+                fontFamily: "Cinzel",
+                borderBottom: "1px solid #333",
+                paddingBottom: "5px",
+              }}
+            >
+              ARRAY PARAMETERS
+            </div>
+
             <div style={{ marginBottom: "10px" }}>
               <div
                 style={{
@@ -337,7 +385,7 @@ const ArrayConfig = ({
               </div>
             )}
 
-            {/* Position Controls */}
+            {/* Array Global Position */}
             <div
               style={{
                 marginTop: "10px",
@@ -352,14 +400,14 @@ const ArrayConfig = ({
                   marginBottom: "4px",
                 }}
               >
-                Position (m)
+                Array Position (m)
               </div>
               <div style={{ display: "flex", gap: "8px", fontSize: "0.65rem" }}>
                 <div>X: {current.x?.toFixed(1)}</div>
                 <input
                   type="range"
-                  min="-5"
-                  max="5"
+                  min="-10"
+                  max="10"
                   step="0.1"
                   value={current.x || 0}
                   onChange={(e) => updateArray("x", parseFloat(e.target.value))}
@@ -377,8 +425,8 @@ const ArrayConfig = ({
                 <div>Y: {current.y?.toFixed(1)}</div>
                 <input
                   type="range"
-                  min="-5"
-                  max="5"
+                  min="-10"
+                  max="10"
                   step="0.1"
                   value={current.y || 0}
                   onChange={(e) => updateArray("y", parseFloat(e.target.value))}
@@ -388,6 +436,184 @@ const ArrayConfig = ({
             </div>
           </div>
         )}
+
+        {/* INDIVIDUAL ANTENNA CONTROL */}
+        <div
+          style={{
+            background: "rgba(211, 47, 47, 0.1)",
+            padding: "10px",
+            border: "1px solid #d32f2f",
+            borderRadius: "4px",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: "10px",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "0.7rem",
+                color: "#d32f2f",
+                fontFamily: "Cinzel",
+              }}
+            >
+              ANTENNA CONTROL
+            </div>
+            <button
+              onClick={() => setShowAntennaList(!showAntennaList)}
+              style={{
+                padding: "2px 8px",
+                fontSize: "0.6rem",
+                background: showAntennaList ? "#d32f2f" : "#333",
+                color: showAntennaList ? "#fff" : "#999",
+                border: "1px solid #555",
+                cursor: "pointer",
+                fontFamily: "Cinzel",
+              }}
+            >
+              {showAntennaList ? "HIDE" : "SELECT"}
+            </button>
+          </div>
+
+          {showAntennaList && (
+            <div
+              style={{
+                maxHeight: "150px",
+                overflowY: "auto",
+                marginBottom: "10px",
+                padding: "5px",
+                background: "#0a0a0c",
+                border: "1px solid #333",
+              }}
+            >
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(4, 1fr)",
+                  gap: "4px",
+                }}
+              >
+                {Array.from({ length: current.count || 0 }, (_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setSelectedAntennaIndex(i)}
+                    style={antennaBtnStyle(selectedAntennaIndex === i)}
+                  >
+                    A{i + 1}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {selectedAntennaIndex !== null ? (
+            <div>
+              <div
+                style={{
+                  fontSize: "0.65rem",
+                  color: "#aaa",
+                  marginBottom: "8px",
+                  textAlign: "center",
+                }}
+              >
+                Antenna #{selectedAntennaIndex + 1} Offset
+              </div>
+              <div style={{ fontSize: "0.65rem", marginBottom: "5px" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    color: "#aaa",
+                  }}
+                >
+                  <span>X Offset:</span>
+                  <span style={{ color: "#c5a059" }}>
+                    {currentAntennaOffset.x?.toFixed(2)}m
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="-5"
+                  max="5"
+                  step="0.05"
+                  value={currentAntennaOffset.x}
+                  onChange={(e) =>
+                    updateAntennaOffset(
+                      selectedAntennaIndex,
+                      "x",
+                      parseFloat(e.target.value)
+                    )
+                  }
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div style={{ fontSize: "0.65rem" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    color: "#aaa",
+                  }}
+                >
+                  <span>Y Offset:</span>
+                  <span style={{ color: "#d32f2f" }}>
+                    {currentAntennaOffset.y?.toFixed(2)}m
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="-5"
+                  max="5"
+                  step="0.05"
+                  value={currentAntennaOffset.y}
+                  onChange={(e) =>
+                    updateAntennaOffset(
+                      selectedAntennaIndex,
+                      "y",
+                      parseFloat(e.target.value)
+                    )
+                  }
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <button
+                onClick={() => {
+                  updateAntennaOffset(selectedAntennaIndex, "x", 0);
+                  updateAntennaOffset(selectedAntennaIndex, "y", 0);
+                }}
+                style={{
+                  width: "100%",
+                  marginTop: "8px",
+                  padding: "4px",
+                  fontSize: "0.6rem",
+                  background: "#333",
+                  color: "#999",
+                  border: "1px solid #555",
+                  cursor: "pointer",
+                  fontFamily: "Cinzel",
+                }}
+              >
+                RESET POSITION
+              </button>
+            </div>
+          ) : (
+            <div
+              style={{
+                fontSize: "0.65rem",
+                color: "#666",
+                textAlign: "center",
+                padding: "20px 10px",
+                fontStyle: "italic",
+              }}
+            >
+              Click "SELECT" to choose an antenna
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

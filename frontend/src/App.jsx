@@ -27,13 +27,12 @@ function App() {
     { magnitude: 0, phase: 0 },
   ]);
 
-  // UPDATED REGION STATE with Position (X, Y)
   const [region, setRegion] = useState({
     type: "inner",
     width: 0.5,
     height: 0.5,
-    x: 0.5, // Center X (0.0 - 1.0)
-    y: 0.5, // Center Y (0.0 - 1.0)
+    x: 0.5,
+    y: 0.5,
   });
 
   const [mixMode, setMixMode] = useState("mag-phase");
@@ -56,6 +55,7 @@ function App() {
     },
   ]);
   const [activeArrayIndex, setActiveArrayIndex] = useState(0);
+  const [selectedAntennaIndex, setSelectedAntennaIndex] = useState(null); // NEW: Track selected antenna
   const [beamMap, setBeamMap] = useState(null);
   const [beamProfileImg, setBeamProfileImg] = useState(null);
   const beamAbortControllerRef = useRef(null);
@@ -94,8 +94,8 @@ function App() {
         region_type: region.type,
         region_width: region.width,
         region_height: region.height,
-        region_x: region.x, // Send X
-        region_y: region.y, // Send Y
+        region_x: region.x,
+        region_y: region.y,
         mix_mode: mixMode,
       };
       const res = await processMix(payload, { signal: ac.signal });
@@ -280,6 +280,8 @@ function App() {
               setArrays={setBeamArrays}
               activeArrayIndex={activeArrayIndex}
               setActiveArrayIndex={setActiveArrayIndex}
+              selectedAntennaIndex={selectedAntennaIndex}
+              setSelectedAntennaIndex={setSelectedAntennaIndex}
             />
             <div
               style={{
@@ -288,15 +290,30 @@ function App() {
                 flexDirection: "column",
                 padding: "10px",
                 gap: "10px",
+                overflow: "hidden",
               }}
             >
-              {/* TOP: Interference Map (Bigger: 1.5) */}
-              <div style={{ flex: 1.5, minHeight: 0, overflow: "hidden" }}>
+              {/* TOP: Interference Map (Bigger: 2) - INCREASED from 1.5 */}
+              <div
+                style={{
+                  flex: 2,
+                  minHeight: 0,
+                  overflow: "hidden",
+                  display: "flex",
+                }}
+              >
                 <InterferenceMap mapImage={beamMap} isLoading={!beamMap} />
               </div>
 
               {/* BOTTOM: Beam Profile (Smaller: 1.0) */}
-              <div style={{ flex: 1.0, minHeight: 0, overflow: "hidden" }}>
+              <div
+                style={{
+                  flex: 1.0,
+                  minHeight: 0,
+                  overflow: "hidden",
+                  display: "flex",
+                }}
+              >
                 <BeamProfile
                   profileImage={beamProfileImg}
                   isLoading={!beamProfileImg}
