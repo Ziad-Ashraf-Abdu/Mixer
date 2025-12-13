@@ -26,7 +26,6 @@ class ImageModel:
 
     def get_component(self, type_str: str):
         """Return log-scaled or raw component for visualization."""
-        # Optimized: checks string equality instead of building a dict of arrays
         if type_str == 'Magnitude':
             return 20 * np.log(self.magnitude + 1e-9)
         elif type_str == 'Phase':
@@ -45,20 +44,33 @@ class ImageModel:
 
 class MixerEngine:
     @staticmethod
-    def create_circular_mask(shape, region_type: str, region_size: float):
-        """Create a circular mask for inner (low-freq) or outer (high-freq) region."""
+    def create_region_mask(shape, region_type: str, width_pct: float, height_pct: float, x_pct: float, y_pct: float):
+        """
+        Create a rectangular mask.
+        width_pct, height_pct: Size as percentage of image dimensions.
+        x_pct, y_pct: Center position as percentage of image dimensions (0.0 to 1.0).
+        """
         h, w = shape
-        center = (h // 2, w // 2)
-        max_radius = min(center)
-        radius = max(1, int(region_size * max_radius))
+        
+        # Calculate center in pixels
+        center_x = int(x_pct * w)
+        center_y = int(y_pct * h)
+        
+        # Calculate half-dimensions in pixels
+        r_w = int((width_pct * w) / 2)
+        r_h = int((height_pct * h) / 2)
 
+        # Create coordinate grids
         Y, X = np.ogrid[:h, :w]
-        dist_from_center = np.sqrt((X - center[1])**2 + (Y - center[0])**2)
+        
+        # Rectangular logic based on dynamic center
+        mask_indices = (np.abs(X - center_x) <= r_w) & (np.abs(Y - center_y) <= r_h)
 
         if region_type == 'inner':
-            mask = dist_from_center <= radius
+            mask = mask_indices
         else:  # 'outer'
-            mask = dist_from_center > radius
+            mask = ~mask_indices
+            
         return mask.astype(np.float32)
 
     @staticmethod
@@ -66,33 +78,33 @@ class MixerEngine:
         images: list[ImageModel],
         weights: list[dict],
         region_type: str,
-        region_size: float,
+        region_width: float,
+        region_height: float,
+        region_x: float,
+        region_y: float,
         mix_mode: Literal['mag-phase', 'real-imag'] = 'mag-phase'
     ):
         """
-        Mix 4 images using weighted FFT components and circular frequency masking.
-        Returns the mixed image (real-valued).
+        Mix 4 images using weighted FFT components and rectangular frequency masking.
         """
-        # Ensure we have valid inputs even if list is short
         if not images:
             raise ValueError("No images provided for mixing.")
 
         shape = images[0].shape
-        mask = MixerEngine.create_circular_mask(shape, region_type, region_size)
+        # Use updated mask generator with position
+        mask = MixerEngine.create_region_mask(shape, region_type, region_width, region_height, region_x, region_y)
 
         if mix_mode == 'mag-phase':
             mixed_mag = np.zeros_like(images[0].magnitude)
             mixed_phase = np.zeros_like(images[0].phase)
 
             for i in range(len(images)):
-                # Safety check if weights list is shorter than images
                 if i < len(weights):
                     w_mag = weights[i].get('magnitude', 0.0)
                     w_phase = weights[i].get('phase', 0.0)
                     mixed_mag += images[i].magnitude * w_mag
                     mixed_phase += images[i].phase * w_phase
 
-            # Reconstruct complex FFT
             mixed_fft = mixed_mag * np.exp(1j * mixed_phase)
 
         elif mix_mode == 'real-imag':
@@ -117,6 +129,6 @@ class MixerEngine:
         # Inverse FFT
         fft_unshifted = np.fft.ifftshift(mixed_fft_masked)
         reconstructed = np.fft.ifft2(fft_unshifted)
-        result = np.abs(reconstructed)  # Ensure real output
+        result = np.abs(reconstructed)
 
         return result

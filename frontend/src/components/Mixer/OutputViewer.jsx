@@ -1,17 +1,8 @@
 // frontend/src/components/Mixer/OutputViewer.jsx
-import React, { useState } from 'react';
-import { FaMagic } from 'react-icons/fa'; // Using a magic icon for the placeholder
+import React from 'react';
+import { FaMagic } from 'react-icons/fa';
 
 const OutputViewer = ({ id, imageSrc, isSelected, onSelect }) => {
-    const [brightness, setBrightness] = useState(100);
-    const [contrast, setContrast] = useState(100);
-    const [isDragging, setIsDragging] = useState(false);
-
-    const handleMouseMove = (e) => {
-        if (!isDragging) return;
-        setBrightness(prev => Math.max(0, prev - (e.movementY * 1.5)));
-        setContrast(prev => Math.max(0, prev + (e.movementX * 1.5)));
-    };
 
     // Custom styled radio/checkbox look for the "Active" toggle
     const toggleStyle = {
@@ -50,14 +41,10 @@ const OutputViewer = ({ id, imageSrc, isSelected, onSelect }) => {
                 </div>
             </div>
 
-            {/* IMAGE DISPLAY AREA (Same as ImageViewer) */}
+            {/* IMAGE DISPLAY AREA (Static, no adjustment) */}
             <div
                 className="img-container"
-                style={{ flex: 1, position: 'relative', cursor: 'grab', background: '#050505' }}
-                onMouseDown={() => setIsDragging(true)}
-                onMouseUp={() => setIsDragging(false)}
-                onMouseLeave={() => setIsDragging(false)}
-                onMouseMove={handleMouseMove}
+                style={{ flex: 1, position: 'relative', background: '#050505' }}
             >
                 {imageSrc ? (
                     <img
@@ -66,7 +53,6 @@ const OutputViewer = ({ id, imageSrc, isSelected, onSelect }) => {
                             width: '100%',
                             height: '100%',
                             objectFit: 'contain',
-                            filter: `brightness(${brightness}%) contrast(${contrast}%)`,
                             pointerEvents: 'none', userSelect: 'none'
                         }}
                         alt={`Output ${id}`}
@@ -78,17 +64,6 @@ const OutputViewer = ({ id, imageSrc, isSelected, onSelect }) => {
                     }}>
                         <FaMagic size={20} />
                         <span>WAITING FOR SPELL...</span>
-                    </div>
-                )}
-
-                {/* B/C Overlay */}
-                {(brightness !== 100 || contrast !== 100) && (
-                    <div style={{
-                        position: 'absolute', bottom: 2, right: 2,
-                        background: 'var(--anti-magic)', color: 'white',
-                        fontSize: '9px', padding: '1px 4px', fontFamily: 'Lato'
-                    }}>
-                        B:{Math.round(brightness)} C:{Math.round(contrast)}
                     </div>
                 )}
             </div>

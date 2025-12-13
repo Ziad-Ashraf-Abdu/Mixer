@@ -6,9 +6,8 @@ const MixerControls = ({ weights, setWeights, region, setRegion, mixMode, setMix
     const [statusText, setStatusText] = useState("READY TO CAST");
     const isFirstRun = useRef(true);
 
-    // --- AUTO-CAST LOGIC (5 Second Debounce) ---
+    // --- AUTO-CAST LOGIC ---
     useEffect(() => {
-        // Skip the very first render so we don't auto-cast on page load
         if (isFirstRun.current) {
             isFirstRun.current = false;
             return;
@@ -16,16 +15,13 @@ const MixerControls = ({ weights, setWeights, region, setRegion, mixMode, setMix
 
         setStatusText("CHANNELLING MANA...");
 
-        // Set the timer
         const timer = setTimeout(() => {
             onProcess();
         }, 1000);
 
-        // Cleanup: If user changes slider again before 5s, cancel previous timer
         return () => clearTimeout(timer);
-    }, [weights, region, mixMode]); // Triggers on any parameter change
+    }, [weights, region, mixMode]);
 
-    // Update status text based on processing state
     useEffect(() => {
         if (isProcessing) {
             setStatusText("CASTING ANTI-MAGIC...");
@@ -42,8 +38,6 @@ const MixerControls = ({ weights, setWeights, region, setRegion, mixMode, setMix
     };
 
     const labelStyle = { display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: '#888', fontFamily: 'Lato' };
-
-    // Determine which sliders to show based on mode
     const isMagPhase = mixMode === 'mag-phase';
 
     return (
@@ -80,7 +74,7 @@ const MixerControls = ({ weights, setWeights, region, setRegion, mixMode, setMix
 
             <div style={{ flex: 1, padding: '10px', overflowY: 'auto' }}>
                 {[0, 1, 2, 3].map(i => (
-                    <div key={i} style={{ marginBottom: '5px', background: 'rgba(0,0,0,0.4)', padding: '8px', borderLeft: '2px solid #c5a059' }}>
+                    <div key={i} style={{ marginBottom: '10px', background: 'rgba(0,0,0,0.4)', padding: '8px', borderLeft: '2px solid #c5a059' }}>
                         <div style={{ fontSize: '0.7rem', color: '#fff', marginBottom: '4px', fontFamily: 'Cinzel' }}>
                             GRIMOIRE PAGE {i + 1}
                         </div>
@@ -109,32 +103,10 @@ const MixerControls = ({ weights, setWeights, region, setRegion, mixMode, setMix
                     </div>
                 ))}
 
-                {/* Region Filter */}
-                <div style={{ marginTop: '15px', padding: '8px', border: '1px solid #333', background: 'rgba(0,0,0,0.6)' }}>
-                    <div style={{fontSize: '0.75rem', color: '#aaa', marginBottom: '6px', fontFamily: 'Cinzel', textAlign:'center'}}>
-                        DOMAIN EXPANSION
-                    </div>
-                    <div style={{ display: 'flex', gap: '2px', marginBottom: '8px' }}>
-                        <button style={{
-                            flex: 1, padding: '4px', fontSize: '0.65rem', border:'1px solid #333', cursor: 'pointer', fontFamily: 'Cinzel',
-                            background: region.type==='inner'?'#c5a059':'#111', color: region.type==='inner'?'#000':'#666',
-                        }} onClick={() => setRegion({...region, type: 'inner'})}>
-                            INNER
-                        </button>
-                        <button style={{
-                            flex: 1, padding: '4px', fontSize: '0.65rem', border:'1px solid #333', cursor: 'pointer', fontFamily: 'Cinzel',
-                            background: region.type==='outer'?'#d32f2f':'#111', color: region.type==='outer'?'#fff':'#666',
-                        }} onClick={() => setRegion({...region, type: 'outer'})}>
-                            OUTER
-                        </button>
-                    </div>
-                    <div style={{fontSize: '0.6rem', color: '#666', textAlign: 'center', marginBottom:'2px'}}>Radius: {Math.round(region.size*100)}%</div>
-                    <input type="range" min="0" max="1" step="0.05" value={region.size}
-                           onChange={(e) => setRegion({...region, size: parseFloat(e.target.value)})} />
-                </div>
+                {/* Region Filter Instructions */}
             </div>
 
-            {/* Status Bar (Replaces Button) */}
+            {/* Status Bar */}
             <div style={{
                 padding: '12px', background: '#0a0a0c', borderTop: '1px solid #333',
                 textAlign: 'center', fontFamily: 'Cinzel', fontSize: '0.8rem',

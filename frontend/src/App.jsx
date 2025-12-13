@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ImageViewer from './components/Mixer/ImageViewer';
 import MixerControls from './components/Mixer/MixerControls';
-import OutputViewer from './components/Mixer/OutputViewer'; // NEW IMPORT
+import OutputViewer from './components/Mixer/OutputViewer';
 import ArrayConfig from './components/Beamforming/ArrayConfig';
 import InterferenceMap from './components/Beamforming/InterferenceMap';
 import BeamProfile from './components/Beamforming/BeamProfile';
@@ -20,7 +20,16 @@ function App() {
         { magnitude: 0, phase: 0 },
         { magnitude: 0, phase: 0 }
     ]);
-    const [region, setRegion] = useState({ type: 'inner', size: 0.5 });
+
+    // UPDATED REGION STATE with Position (X, Y)
+    const [region, setRegion] = useState({
+        type: 'inner',
+        width: 0.5,
+        height: 0.5,
+        x: 0.5, // Center X (0.0 - 1.0)
+        y: 0.5  // Center Y (0.0 - 1.0)
+    });
+
     const [mixMode, setMixMode] = useState('mag-phase');
     const [selectedPort, setSelectedPort] = useState(1);
     const [output1, setOutput1] = useState(null);
@@ -42,7 +51,7 @@ function App() {
         try {
             await uploadImage(index, file);
             const newIds = [...imageIds];
-            newIds[index] = Date.now(); // Force re-render
+            newIds[index] = Date.now();
             setImageIds(newIds);
         } catch (err) {
             console.error('Upload error:', err);
@@ -69,7 +78,10 @@ function App() {
             const payload = {
                 weights,
                 region_type: region.type,
-                region_size: region.size,
+                region_width: region.width,
+                region_height: region.height,
+                region_x: region.x, // Send X
+                region_y: region.y, // Send Y
                 mix_mode: mixMode
             };
             const res = await processMix(payload, { signal: ac.signal });
@@ -155,7 +167,14 @@ function App() {
                     <>
                         <div style={{ flex: 2, padding: '20px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', overflowY: 'auto' }}>
                             {imageIds.map((imgId, idx) => (
-                                <ImageViewer key={idx} id={idx} imageId={imgId} onUpload={handleUpload} />
+                                <ImageViewer
+                                    key={idx}
+                                    id={idx}
+                                    imageId={imgId}
+                                    onUpload={handleUpload}
+                                    region={region}
+                                    setRegion={setRegion}
+                                />
                             ))}
                         </div>
 
@@ -170,12 +189,9 @@ function App() {
                                 onProcess={handleMix}
                                 isProcessing={isProcessing}
                             />
-
-                            {/* Removed the radio button div here */}
                         </div>
 
                         <div style={{ flex: 1, padding: '10px', background: '#0a0a0c', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                            {/* Updated Output Viewers with direct selection */}
                             <OutputViewer
                                 id={1}
                                 imageSrc={output1}

@@ -28,11 +28,14 @@ class ComponentRequest(BaseModel):
 class MixRequest(BaseModel):
     weights: list[dict]
     region_type: str
-    region_size: float
-    mix_mode: str = 'mag-phase'  # 'mag-phase' or 'real-imag'
+    region_width: float
+    region_height: float
+    region_x: float # Center X (0-1)
+    region_y: float # Center Y (0-1)
+    mix_mode: str = 'mag-phase'
 
 class BeamRequest(BaseModel):
-    arrays: list[dict]  # Each: {count, geo, curve, steering, x, y}
+    arrays: list[dict]
     resolution: int = 100
 
 # --- Helper: Create blank image ---
@@ -60,7 +63,6 @@ async def get_component_view(req: ComponentRequest):
         raise HTTPException(status_code=400, detail="id must be 0-3")
     img_model = uploaded_images.get(req.id)
     if img_model is None:
-        # Return blank if not uploaded
         img_model = _create_blank_image_model()
     
     raw_data = img_model.get_component(req.type_str)
@@ -79,21 +81,21 @@ async def get_component_view(req: ComponentRequest):
 @app.post("/process_mix")
 async def mix_request(data: MixRequest):
     try:
-        # Ensure 4 images (use blank if missing)
         images = []
         for i in range(4):
             images.append(uploaded_images.get(i, _create_blank_image_model()))
 
-        # Mix
         result = MixerEngine.mix_images(
             images=images,
             weights=data.weights,
             region_type=data.region_type,
-            region_size=data.region_size,
+            region_width=data.region_width,
+            region_height=data.region_height,
+            region_x=data.region_x,
+            region_y=data.region_y,
             mix_mode=data.mix_mode
         )
 
-        # Encode result
         norm_res = cv2.normalize(result, None, 0, 255, cv2.NORM_MINMAX)
         _, buffer = cv2.imencode('.png', np.uint8(norm_res))
         b64 = base64.b64encode(buffer).decode()
@@ -104,7 +106,6 @@ async def mix_request(data: MixRequest):
 @app.post("/simulate_beam")
 async def beam_request(config: BeamRequest):
     try:
-        # Create grid (20m x 20m)
         res = config.resolution
         x = np.linspace(-10, 10, res)
         y = np.linspace(0, 20, res)
@@ -112,7 +113,6 @@ async def beam_request(config: BeamRequest):
 
         total_field = np.zeros_like(X, dtype=np.complex128)
 
-        # Sum field from all arrays
         for arr_cfg in config.arrays:
             array = PhasedArray(
                 num_elements=arr_cfg['count'],
@@ -127,7 +127,6 @@ async def beam_request(config: BeamRequest):
             )
             total_field += field
 
-        # Magnitude for visualization
         magnitude = np.abs(total_field)
         norm = cv2.normalize(magnitude, None, 0, 255, cv2.NORM_MINMAX)
         colored = cv2.applyColorMap(np.uint8(norm), cv2.COLORMAP_JET)
@@ -140,7 +139,6 @@ async def beam_request(config: BeamRequest):
 
 @app.post("/get_beam_profile")
 async def get_beam_profile(config: BeamRequest):
-    """Return 1D beam pattern for the first array (for now)."""
     try:
         if not config.arrays:
             raise ValueError("No arrays provided")
@@ -153,12 +151,10 @@ async def get_beam_profile(config: BeamRequest):
             geometry=arr['geo'],
             curvature=arr.get('curve', 0)
         )
-        # Normalize to [0, 255] for simple line plot (or return raw data)
         power_norm = (af_power - af_power.min()) / (af_power.max() - af_power.min() + 1e-9)
-        plot_data = (255 * (1 - power_norm)).astype(np.uint8)  # Invert for bright peak
+        plot_data = (255 * (1 - power_norm)).astype(np.uint8)
 
-        # Create 1D image: 181x100
-        plot_img = np.tile(plot_data[:, None], (1, 100)).T  # Shape: (100, 181)
+        plot_img = np.tile(plot_data[:, None], (1, 100)).T
         _, buffer = cv2.imencode('.png', plot_img)
         b64 = base64.b64encode(buffer).decode()
         return {"profile": f"data:image/png;base64,{b64}"}

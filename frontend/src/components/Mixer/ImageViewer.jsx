@@ -1,13 +1,36 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { fetchComponent } from '../../api';
 import { FaPlus } from 'react-icons/fa';
+import FTRegionOverlay from './FTRegionOverlay';
 
 // --- INTERNAL HELPER COMPONENT ---
-const ViewportHalf = ({ titleHeader, imageSrc, bcState, setBcState, onDoubleClick, isPlaceholder, borderStyle }) => {
+const ViewportHalf = ({
+                          titleHeader,
+                          imageSrc,
+                          bcState,
+                          setBcState,
+                          onDoubleClick,
+                          isPlaceholder,
+                          borderStyle,
+                          overlay,
+                          enableAdjustments = false
+                      }) => {
     const [isDragging, setIsDragging] = useState(false);
 
+    const handleMouseDown = () => {
+        if (enableAdjustments) setIsDragging(true);
+    };
+
+    const handleMouseUp = () => {
+        if (enableAdjustments) setIsDragging(false);
+    };
+
+    const handleMouseLeave = () => {
+        if (enableAdjustments) setIsDragging(false);
+    };
+
     const handleMouseMove = (e) => {
-        if (!isDragging) return;
+        if (!isDragging || !enableAdjustments || !setBcState) return;
         setBcState(prev => ({
             b: Math.max(0, prev.b - e.movementY * 1.5),
             c: Math.max(0, prev.c + e.movementX * 1.5)
@@ -20,7 +43,7 @@ const ViewportHalf = ({ titleHeader, imageSrc, bcState, setBcState, onDoubleClic
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
-            ...borderStyle // Apply custom border passed from parent
+            ...borderStyle
         }}>
             {/* Header Section */}
             <div className="viewer-header" style={{ padding: '4px 6px', background: '#111', display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '24px' }}>
@@ -30,11 +53,19 @@ const ViewportHalf = ({ titleHeader, imageSrc, bcState, setBcState, onDoubleClic
             {/* Image Container */}
             <div
                 className="img-container"
-                style={{ flex: 1, position: 'relative', cursor: 'grab', background: '#050505', display: 'flex', justifyContent: 'center', alignItems: 'center' }}
+                style={{
+                    flex: 1,
+                    position: 'relative',
+                    cursor: enableAdjustments ? 'grab' : 'default',
+                    background: '#050505',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center'
+                }}
                 onDoubleClick={onDoubleClick}
-                onMouseDown={() => setIsDragging(true)}
-                onMouseUp={() => setIsDragging(false)}
-                onMouseLeave={() => setIsDragging(false)}
+                onMouseDown={handleMouseDown}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseLeave}
                 onMouseMove={handleMouseMove}
             >
                 {imageSrc ? (
@@ -60,8 +91,11 @@ const ViewportHalf = ({ titleHeader, imageSrc, bcState, setBcState, onDoubleClic
                     )
                 )}
 
-                {/* B/C Overlay */}
-                {(bcState.b !== 100 || bcState.c !== 100) && (
+                {/* OVERLAY RENDERED HERE */}
+                {overlay}
+
+                {/* B/C Overlay (Only show if enabled and changed) */}
+                {enableAdjustments && (bcState.b !== 100 || bcState.c !== 100) && (
                     <div style={{
                         position: 'absolute', bottom: 2, right: 2, pointerEvents: 'none',
                         background: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: '8px', padding: '1px 3px', fontFamily: 'Lato'
@@ -76,16 +110,18 @@ const ViewportHalf = ({ titleHeader, imageSrc, bcState, setBcState, onDoubleClic
 
 
 // --- MAIN COMPONENT ---
-const ImageViewer = ({ id, imageId, onUpload }) => {
+const ImageViewer = ({ id, imageId, onUpload, region, setRegion }) => {
     const [componentType, setComponentType] = useState('Magnitude');
 
     // Image Data States
     const [originalSrc, setOriginalSrc] = useState(null);
     const [componentSrc, setComponentSrc] = useState(null);
 
-    // Independent Brightness/Contrast States
+    // Brightness/Contrast State (Only for Original now)
     const [bcOriginal, setBcOriginal] = useState({ b: 100, c: 100 });
-    const [bcComponent, setBcComponent] = useState({ b: 100, c: 100 });
+
+    // Fixed state for component view (no adjustment)
+    const bcFixed = { b: 100, c: 100 };
 
     const fileInputRef = useRef(null);
 
@@ -112,7 +148,7 @@ const ImageViewer = ({ id, imageId, onUpload }) => {
     return (
         <div className="viewer-wrapper" style={{
             display: 'flex',
-            flexDirection: 'row', // CHANGED: Row for side-by-side layout
+            flexDirection: 'row',
             height: '100%',
             background: '#0a0a0c',
             border: '1px solid #333',
@@ -120,7 +156,7 @@ const ImageViewer = ({ id, imageId, onUpload }) => {
         }}>
             <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileChange} accept="image/*" />
 
-            {/* --- LEFT HALF: FIXED ORIGINAL --- */}
+            {/* --- LEFT HALF: FIXED ORIGINAL (Adjustable) --- */}
             <ViewportHalf
                 titleHeader={<strong style={{ fontSize: '0.7rem', color: '#c5a059', fontFamily: 'Cinzel' }}>Original {id + 1}</strong>}
                 imageSrc={originalSrc}
@@ -128,10 +164,11 @@ const ImageViewer = ({ id, imageId, onUpload }) => {
                 setBcState={setBcOriginal}
                 onDoubleClick={triggerUpload}
                 isPlaceholder={true}
-                borderStyle={{ borderRight: '1px solid #333' }} // Add vertical divider
+                borderStyle={{ borderRight: '1px solid #333' }}
+                enableAdjustments={true} // ENABLED
             />
 
-            {/* --- RIGHT HALF: COMPONENT SELECTOR --- */}
+            {/* --- RIGHT HALF: COMPONENT SELECTOR + REGION OVERLAY (Not Adjustable) --- */}
             <ViewportHalf
                 titleHeader={
                     <>
@@ -150,10 +187,12 @@ const ImageViewer = ({ id, imageId, onUpload }) => {
                     </>
                 }
                 imageSrc={componentSrc}
-                bcState={bcComponent}
-                setBcState={setBcComponent}
+                bcState={bcFixed} // Fixed 100/100
+                setBcState={null} // No setter
                 isPlaceholder={false}
-                borderStyle={{}} // No border for the last one
+                borderStyle={{}}
+                enableAdjustments={false} // DISABLED
+                overlay={<FTRegionOverlay region={region} setRegion={setRegion} />}
             />
         </div>
     );
