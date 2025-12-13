@@ -42,7 +42,7 @@ class MixRequest(BaseModel):
 
 class BeamRequest(BaseModel):
     arrays: list[dict]
-    resolution: int = 300  # High resolution for map
+    resolution: int = 300 
 
 # --- Helper: Create blank image ---
 def _create_blank_image_model():
@@ -116,23 +116,32 @@ async def mix_request(data: MixRequest):
 async def beam_request(config: BeamRequest):
     try:
         res = config.resolution 
-        x = np.linspace(-10, 10, res)
-        y = np.linspace(0, 20, res)
+        # Defines the View Window (in meters)
+        # Using -15 to 15 Width ensures the array fits comfortably (Zoom Fix)
+        min_x, max_x = -15, 15
+        min_y, max_y = 0, 30
+        
+        x = np.linspace(min_x, max_x, res)
+        y = np.linspace(min_y, max_y, res)
         X, Y = np.meshgrid(x, y)
 
         total_field = np.zeros_like(X, dtype=np.float64)
+        antenna_draw_list = [] 
 
         for arr_cfg in config.arrays:
-            # Normalize curvature
+            # Normalize curvature (Frontend 0-20 -> Backend 0.0-0.2)
             curve_val = arr_cfg.get('curve', 0) / 500.0 
             
+            # Use 600 MHz (6e8) so array is ~4m wide. Fits perfectly in 30m grid.
             array = PhasedArray(
                 num_elements=arr_cfg['count'],
                 geometry=arr_cfg['geo'],
                 curvature=curve_val,
                 position=(arr_cfg.get('x', 0.0), arr_cfg.get('y', 0.0)),
-                frequency=1e8
+                frequency=6e8 
             )
+            
+            # 1. Compute Field
             field = array.calculate_interference_map(
                 steering_angle_deg=arr_cfg['steering'],
                 grid_x=X,
@@ -140,15 +149,43 @@ async def beam_request(config: BeamRequest):
             )
             total_field += field
 
+            # 2. Compute Antenna Pixel Coordinates for Drawing
+            # Convert Physical (meters) -> Pixel (row, col)
+            global_positions = array.element_positions + array.position
+            
+            for i in range(len(global_positions)):
+                phys_x = global_positions[i, 0]
+                phys_y = global_positions[i, 1]
+                
+                # Normalize coordinates to 0..1
+                norm_x = (phys_x - min_x) / (max_x - min_x)
+                norm_y = (phys_y - min_y) / (max_y - min_y)
+                
+                px_col = int(norm_x * res)
+                
+                # IMPORTANT: Image will be flipped vertically later.
+                # In a flipped image (Y=0 at bottom), row index starts at res (bottom) to 0 (top).
+                px_row = int((1 - norm_y) * res) 
+                
+                if 0 <= px_col < res and 0 <= px_row < res:
+                    antenna_draw_list.append((px_col, px_row))
+
+        # Visual Processing
         abs_field = np.abs(total_field)
         log_field = np.log1p(abs_field)
         
         norm = cv2.normalize(log_field, None, 0, 255, cv2.NORM_MINMAX)
         colored = cv2.applyColorMap(np.uint8(norm), cv2.COLORMAP_JET)
         
-        # Flip to correct orientation
-        colored = cv2.flip(colored, 0)
+        # Flip so Y=0 is physically at the bottom (Standard Graph View)
+        colored = cv2.flip(colored, 0) 
         
+        # --- DRAW DOTS (Antennas) ---
+        # Drawing on top of the heatmap
+        for (col, row) in antenna_draw_list:
+             cv2.circle(colored, (col, row), 4, (0, 0, 255), -1)   # Red Dot
+             cv2.circle(colored, (col, row), 5, (255, 255, 255), 1) # White Border
+
         _, buffer = cv2.imencode('.png', colored)
         b64 = base64.b64encode(buffer).decode()
         return {"map": f"data:image/png;base64,{b64}"}
@@ -166,31 +203,31 @@ async def get_beam_profile(config: BeamRequest):
         
         curve_val = arr.get('curve', 0) / 500.0
         
+        # Use same frequency as map (6e8) for consistency
         _, af_mag = PhasedArray.compute_array_factor(
             num_elements=arr['count'],
             steering_angle_deg=arr['steering'],
             test_angles_deg=angles_deg,
             geometry=arr['geo'],
             curvature=curve_val,
-            frequency=1e8
+            frequency=6e8
         )
         
-        # --- Generate LARGE Polar Plot ---
-        # Increased figsize to (6,6) for a larger, clearer graph
+        # --- Matplotlib Polar Plot (Matches GitHub Style) ---
         fig = plt.figure(figsize=(6, 6), dpi=100) 
         ax = fig.add_subplot(111, polar=True)
         
         theta = np.radians(angles_deg)
         
-        ax.set_theta_zero_location("N")
-        ax.set_theta_direction(-1) 
+        ax.set_theta_zero_location("N") # 0 deg at top
+        ax.set_theta_direction(-1)      # Clockwise
         ax.set_thetamin(-90)
         ax.set_thetamax(90)
         
         norm_mag = af_mag / (np.max(af_mag) + 1e-9)
-        ax.plot(theta, norm_mag, color='#00FFFF', linewidth=2.5) # Cyan color, thicker line
+        ax.plot(theta, norm_mag, color='#00FFFF', linewidth=2.5) # Cyan Line
         
-        # Styling
+        # Dark Theme Styling
         fig.patch.set_facecolor('#050505') 
         ax.set_facecolor('#111')       
         ax.tick_params(axis='x', colors='white', labelsize=8)
