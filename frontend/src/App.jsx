@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ImageViewer from './components/Mixer/ImageViewer';
 import MixerControls from './components/Mixer/MixerControls';
+import OutputViewer from './components/Mixer/OutputViewer'; // NEW IMPORT
 import ArrayConfig from './components/Beamforming/ArrayConfig';
 import InterferenceMap from './components/Beamforming/InterferenceMap';
 import BeamProfile from './components/Beamforming/BeamProfile';
@@ -170,51 +171,23 @@ function App() {
                                 isProcessing={isProcessing}
                             />
 
-                            <div style={{ padding: '20px', borderTop: '1px solid #333', color: '#ccc' }}>
-                                <h4 style={{ margin: '0 0 10px', color: '#c5a059', fontFamily: 'Cinzel' }}>Output Destination</h4>
-                                <label style={{ display: 'block', marginBottom: '8px' }}>
-                                    <input
-                                        type="radio"
-                                        name="port"
-                                        checked={selectedPort === 1}
-                                        onChange={() => setSelectedPort(1)}
-                                        style={{ marginRight: '6px' }}
-                                    />
-                                    Port 1
-                                </label>
-                                <label>
-                                    <input
-                                        type="radio"
-                                        name="port"
-                                        checked={selectedPort === 2}
-                                        onChange={() => setSelectedPort(2)}
-                                        style={{ marginRight: '6px' }}
-                                    />
-                                    Port 2
-                                </label>
-                            </div>
+                            {/* Removed the radio button div here */}
                         </div>
 
                         <div style={{ flex: 1, padding: '10px', background: '#0a0a0c', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                            <div style={{ flex: 1, border: '2px dashed #555', background: '#000', position: 'relative' }}>
-                                <span style={{ position: 'absolute', top: 0, left: 0, background: '#333', color: 'white', padding: '2px 5px', fontSize: '0.7rem' }}>Output 1</span>
-                                {output1 && <img src={output1} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />}
-                                {isProcessing && selectedPort === 1 && (
-                                    <div style={{ position: 'absolute', bottom: 0, width: '100%', background: 'rgba(211,47,47,0.8)', color: 'white', textAlign: 'center', fontSize: '0.7rem', padding: '2px' }}>
-                                        CASTING...
-                                    </div>
-                                )}
-                            </div>
-
-                            <div style={{ flex: 1, border: '2px dashed #555', background: '#000', position: 'relative' }}>
-                                <span style={{ position: 'absolute', top: 0, left: 0, background: '#333', color: 'white', padding: '2px 5px', fontSize: '0.7rem' }}>Output 2</span>
-                                {output2 && <img src={output2} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />}
-                                {isProcessing && selectedPort === 2 && (
-                                    <div style={{ position: 'absolute', bottom: 0, width: '100%', background: 'rgba(211,47,47,0.8)', color: 'white', textAlign: 'center', fontSize: '0.7rem', padding: '2px' }}>
-                                        CASTING...
-                                    </div>
-                                )}
-                            </div>
+                            {/* Updated Output Viewers with direct selection */}
+                            <OutputViewer
+                                id={1}
+                                imageSrc={output1}
+                                isSelected={selectedPort === 1}
+                                onSelect={() => setSelectedPort(1)}
+                            />
+                            <OutputViewer
+                                id={2}
+                                imageSrc={output2}
+                                isSelected={selectedPort === 2}
+                                onSelect={() => setSelectedPort(2)}
+                            />
                         </div>
                     </>
                 ) : (
