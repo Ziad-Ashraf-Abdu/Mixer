@@ -1,5 +1,5 @@
 // components/Beamforming/ArrayConfig.jsx
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 
 const ArrayConfig = ({
   arrays,
@@ -9,20 +9,26 @@ const ArrayConfig = ({
   selectedAntennaIndex,
   setSelectedAntennaIndex,
 }) => {
-  const [activeScenario, setActiveScenario] = useState(null);
+  const [activeScenario, setActiveScenario] = useState("5G"); // DEFAULT: 5G
   const [showAntennaList, setShowAntennaList] = useState(false);
+
+  // Load 5G scenario on mount
+  useEffect(() => {
+    loadScenario("5G");
+  }, []); // Empty dependency array = run once on mount
 
   const addArray = () => {
     setArrays((prev) => [
       ...prev,
       {
         count: 16,
-        geo: "linear",
+        geo: "linear", // DEFAULT: Linear
         curve: 0,
         steering: 0,
+        spacing: 0.5, // NEW: Default spacing (lambda/2)
         x: 0,
         y: 0,
-        antennaOffsets: {}, // Store individual antenna offsets {index: {x, y}}
+        antennaOffsets: {},
         id: Date.now(),
       },
     ]);
@@ -59,13 +65,14 @@ const ArrayConfig = ({
 
   const loadScenario = (name) => {
     setActiveScenario(name);
-    const base = { id: Date.now(), antennaOffsets: {} };
+    const base = { id: Date.now(), antennaOffsets: {}, spacing: 0.5 };
+
     if (name === "5G") {
       setArrays([
         {
           ...base,
           count: 32,
-          geo: "linear",
+          geo: "linear", // FIXED: Linear default
           curve: 0,
           steering: 30,
           x: 0,
@@ -77,8 +84,8 @@ const ArrayConfig = ({
         {
           ...base,
           count: 64,
-          geo: "curved",
-          curve: 8,
+          geo: "linear", // FIXED: Linear default
+          curve: 0, // Start with 0, user can adjust
           steering: 0,
           x: 0,
           y: 0,
@@ -89,8 +96,8 @@ const ArrayConfig = ({
         {
           ...base,
           count: 16,
-          geo: "curved",
-          curve: 15,
+          geo: "linear", // FIXED: Linear default
+          curve: 0, // Start with 0, user can adjust
           steering: 0,
           x: 0,
           y: 0,
@@ -285,6 +292,7 @@ const ArrayConfig = ({
               ARRAY PARAMETERS
             </div>
 
+            {/* Mana Sources (Count) */}
             <div style={{ marginBottom: "10px" }}>
               <div
                 style={{
@@ -307,6 +315,35 @@ const ArrayConfig = ({
               />
             </div>
 
+            {/* NEW: Antenna Spacing */}
+            <div style={{ marginBottom: "10px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  fontSize: "0.65rem",
+                  color: "#aaa",
+                  fontFamily: "Lato",
+                }}
+              >
+                <span>Antenna Spacing</span>
+                <span style={{ color: "#00ffff" }}>
+                  {(current.spacing || 0.5).toFixed(2)}λ
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0.1"
+                max="2.0"
+                step="0.05"
+                value={current.spacing || 0.5}
+                onChange={(e) =>
+                  updateArray("spacing", parseFloat(e.target.value))
+                }
+              />
+            </div>
+
+            {/* Steering */}
             <div style={{ marginBottom: "10px" }}>
               <div
                 style={{
@@ -331,6 +368,7 @@ const ArrayConfig = ({
               />
             </div>
 
+            {/* Formation */}
             <div style={{ marginBottom: "10px" }}>
               <div
                 style={{
@@ -359,6 +397,7 @@ const ArrayConfig = ({
               </select>
             </div>
 
+            {/* Curvature (only if curved selected) */}
             {current.geo === "curved" && (
               <div style={{ marginBottom: "10px" }}>
                 <div

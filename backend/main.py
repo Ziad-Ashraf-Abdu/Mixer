@@ -116,9 +116,9 @@ async def mix_request(data: MixRequest):
 async def beam_request(config: BeamRequest):
     try:
         res = config.resolution 
-        # FIXED: Adjusted view window to show more area and center the arrays better
-        min_x, max_x = -20, 20
-        min_y, max_y = -5, 35
+        # OPTIMIZED: Adjusted to 3:4 aspect ratio for wider display
+        min_x, max_x = -25, 25   # Wider (was -20, 20)
+        min_y, max_y = -5, 35    # Keep same vertical range
         
         x = np.linspace(min_x, max_x, res)
         y = np.linspace(min_y, max_y, res)
@@ -134,12 +134,16 @@ async def beam_request(config: BeamRequest):
             # Get antenna offsets if provided
             antenna_offsets = arr_cfg.get('antennaOffsets', {})
             
+            # Get custom spacing (default to 0.5 for lambda/2)
+            spacing = arr_cfg.get('spacing', 0.5)
+            
             array = PhasedArray(
                 num_elements=arr_cfg['count'],
                 geometry=arr_cfg['geo'],
                 curvature=curve_val,
                 position=(arr_cfg.get('x', 0.0), arr_cfg.get('y', 0.0)),
-                frequency=6e8 
+                frequency=6e8,
+                spacing_factor=spacing  # NEW: Custom spacing
             )
             
             # Apply individual antenna offsets
@@ -193,6 +197,83 @@ async def beam_request(config: BeamRequest):
         b64 = base64.b64encode(buffer).decode()
         return {"map": f"data:image/png;base64,{b64}"}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/get_beam_profile")
+async def get_beam_profile(config: BeamRequest):
+    try:
+        if not config.arrays:
+            raise ValueError("No arrays provided")
+        arr = config.arrays[0]
+        
+        angles_deg = np.linspace(-90, 90, 360)
+        curve_val = arr.get('curve', 0) / 500.0
+        spacing = arr.get('spacing', 0.5)
+        
+        # Get antenna offsets
+        antenna_offsets = arr.get('antennaOffsets', {})
+        
+        # Create array with custom spacing
+        array = PhasedArray(
+            num_elements=arr['count'],
+            geometry=arr['geo'],
+            curvature=curve_val,
+            position=(arr.get('x', 0.0), arr.get('y', 0.0)),
+            frequency=6e8,
+            spacing_factor=spacing
+        )
+        
+        # Apply individual antenna offsets
+        if antenna_offsets:
+            for idx_str, offset in antenna_offsets.items():
+                idx = int(idx_str)
+                if idx < len(array.element_positions):
+                    array.element_positions[idx, 0] += offset.get('x', 0)
+                    array.element_positions[idx, 1] += offset.get('y', 0)
+        
+        # Compute array factor
+        _, af_mag = PhasedArray.compute_array_factor(
+            num_elements=arr['count'],
+            steering_angle_deg=arr['steering'],
+            test_angles_deg=angles_deg,
+            geometry=arr['geo'],
+            curvature=curve_val,
+            frequency=6e8,
+            spacing_factor=spacing
+        )
+        
+        # --- Matplotlib Polar Plot ---
+        fig = plt.figure(figsize=(6, 6), dpi=100) 
+        ax = fig.add_subplot(111, polar=True)
+        
+        theta = np.radians(angles_deg)
+        
+        ax.set_theta_zero_location("N")
+        ax.set_theta_direction(-1)
+        ax.set_thetamin(-90)
+        ax.set_thetamax(90)
+        
+        norm_mag = af_mag / (np.max(af_mag) + 1e-9)
+        ax.plot(theta, norm_mag, color='#00FFFF', linewidth=2.5)
+        
+        # Dark Theme Styling
+        fig.patch.set_facecolor('#050505') 
+        ax.set_facecolor('#111')       
+        ax.tick_params(axis='x', colors='white', labelsize=8)
+        ax.tick_params(axis='y', colors='white', labelsize=8)
+        ax.spines['polar'].set_visible(False)
+        ax.grid(color='gray', linestyle=':', alpha=0.3)
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', facecolor=fig.get_facecolor())
+        buf.seek(0)
+        plt.close(fig)
+        
+        b64 = base64.b64encode(buf.read()).decode()
+        return {"profile": f"data:image/png;base64,{b64}"}
+    except Exception as e:
+        print(e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

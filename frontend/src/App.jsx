@@ -43,22 +43,51 @@ function App() {
   const mixAbortControllerRef = useRef(null);
 
   // --- Beamforming State ---
+  // Initialize with 5G default configuration
   const [beamArrays, setBeamArrays] = useState([
     {
-      count: 16,
+      count: 32,
       geo: "linear",
       curve: 0,
-      steering: 0,
+      steering: 30,
+      spacing: 0.5,
       x: 0,
       y: 0,
+      antennaOffsets: {},
       id: Date.now(),
     },
   ]);
   const [activeArrayIndex, setActiveArrayIndex] = useState(0);
-  const [selectedAntennaIndex, setSelectedAntennaIndex] = useState(null); // NEW: Track selected antenna
+  const [selectedAntennaIndex, setSelectedAntennaIndex] = useState(null);
   const [beamMap, setBeamMap] = useState(null);
   const [beamProfileImg, setBeamProfileImg] = useState(null);
   const beamAbortControllerRef = useRef(null);
+
+  // Track if beamforming has been initialized
+  const beamInitialized = useRef(false);
+
+  // --- Auto-load 5G when switching to beamforming tab ---
+  useEffect(() => {
+    if (activeTab === "beamforming" && !beamInitialized.current) {
+      // Reset to 5G defaults when entering beamforming for first time
+      setBeamArrays([
+        {
+          count: 32,
+          geo: "linear",
+          curve: 0,
+          steering: 30,
+          spacing: 0.5,
+          x: 0,
+          y: 0,
+          antennaOffsets: {},
+          id: Date.now(),
+        },
+      ]);
+      setActiveArrayIndex(0);
+      setSelectedAntennaIndex(null);
+      beamInitialized.current = true;
+    }
+  }, [activeTab]);
 
   // --- Upload Handler ---
   const handleUpload = async (index, file) => {
@@ -293,7 +322,7 @@ function App() {
                 overflow: "hidden",
               }}
             >
-              {/* TOP: Interference Map (Bigger: 2) - INCREASED from 1.5 */}
+              {/* TOP: Interference Map (Bigger: 2) */}
               <div
                 style={{
                   flex: 2,
