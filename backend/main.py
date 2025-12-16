@@ -1,18 +1,15 @@
-# main.py
+# backend/main.py
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from core.image_processor import ImageModel, MixerEngine
-from core.beamformer import PhasedArray
-import numpy as np
 import base64
-import cv2
 import matplotlib
-import io
 
-# Set Matplotlib to non-interactive mode (crucial for servers)
+# Set backend before importing pyplot logic (via beamformer)
 matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+
+from core.image_processor import ImageModel, MixerService, ImagePresenter
+from core.beamformer import PhasedArray, BeamSystem
 
 app = FastAPI()
 
@@ -23,8 +20,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- In-Memory Storage ---
-uploaded_images = {}
+# --- Dependency Injection & State Management ---
+
+class ImageRepository:
+    """Encapsulates in-memory storage."""
+    def __init__(self):
+        self._storage = {}
+        self._capacity = 4
+
+    def save(self, slot_id: int, image: ImageModel):
+        if not (0 <= slot_id < self._capacity):
+            raise ValueError(f"Slot ID must be 0-{self._capacity-1}")
+        self._storage[slot_id] = image
+
+    def get(self, slot_id: int) -> ImageModel:
+        # Return existing or a blank default
+        return self._storage.get(slot_id, ImageModel())
+
+    def get_all(self):
+        return [self.get(i) for i in range(self._capacity)]
+
+# Instantiate Dependencies
+repo = ImageRepository()
+mixer_service = MixerService()
 
 # --- Pydantic Models ---
 class ComponentRequest(BaseModel):
@@ -44,69 +62,55 @@ class BeamRequest(BaseModel):
     arrays: list[dict]
     resolution: int = 300 
 
-# --- Helper: Create blank image ---
-def _create_blank_image_model():
-    blank = np.zeros((256, 256), dtype=np.uint8)
-    _, buf = cv2.imencode('.png', blank)
-    return ImageModel(buf.tobytes())
+# --- Helpers ---
+def to_base64_response(img_bytes: bytes, key: str):
+    b64 = base64.b64encode(img_bytes).decode()
+    return {key: f"data:image/png;base64,{b64}"}
 
 # --- Endpoints ---
 
 @app.post("/upload/{img_id}")
 async def upload_image(img_id: int, file: UploadFile = File(...)):
-    if img_id not in [0, 1, 2, 3]:
-        raise HTTPException(status_code=400, detail="img_id must be 0-3")
     try:
         contents = await file.read()
-        img_model = ImageModel(contents)
-        uploaded_images[img_id] = img_model
-        return {"status": "success", "shape": img_model.shape}
+        image = ImageModel(contents)
+        repo.save(img_id, image)
+        return {"status": "success", "shape": image.shape}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/get_component")
 async def get_component_view(req: ComponentRequest):
-    if req.id not in [0, 1, 2, 3]:
-        raise HTTPException(status_code=400, detail="id must be 0-3")
-    img_model = uploaded_images.get(req.id)
-    if img_model is None:
-        img_model = _create_blank_image_model()
-    
-    raw_data = img_model.get_component(req.type_str)
-    raw_data = np.nan_to_num(raw_data, nan=0.0, posinf=0.0, neginf=0.0)
-    
-    if raw_data.dtype != np.uint8:
-        norm = cv2.normalize(raw_data, None, 0, 255, cv2.NORM_MINMAX)
-        disp_img = np.uint8(norm)
-    else:
-        disp_img = raw_data
-
-    _, buffer = cv2.imencode('.png', disp_img)
-    b64 = base64.b64encode(buffer).decode()
-    return {"image": f"data:image/png;base64,{b64}"}
+    try:
+        image = repo.get(req.id)
+        raw_data = image.get_component_data(req.type_str)
+        img_bytes = ImagePresenter.encode_to_bytes(raw_data)
+        return to_base64_response(img_bytes, "image")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/process_mix")
 async def mix_request(data: MixRequest):
     try:
-        images = []
-        for i in range(4):
-            images.append(uploaded_images.get(i, _create_blank_image_model()))
+        images = repo.get_all()
+        
+        region_config = {
+            "region_type": data.region_type,
+            "width_pct": data.region_width,
+            "height_pct": data.region_height,
+            "x_pct": data.region_x,
+            "y_pct": data.region_y
+        }
 
-        result = MixerEngine.mix_images(
+        result_data = mixer_service.mix_images(
             images=images,
             weights=data.weights,
-            region_type=data.region_type,
-            region_width=data.region_width,
-            region_height=data.region_height,
-            region_x=data.region_x,
-            region_y=data.region_y,
-            mix_mode=data.mix_mode
+            region_config=region_config,
+            mode=data.mix_mode
         )
-
-        norm_res = cv2.normalize(result, None, 0, 255, cv2.NORM_MINMAX)
-        _, buffer = cv2.imencode('.png', np.uint8(norm_res))
-        b64 = base64.b64encode(buffer).decode()
-        return {"image": f"data:image/png;base64,{b64}"}
+        
+        img_bytes = ImagePresenter.encode_to_bytes(result_data)
+        return to_base64_response(img_bytes, "image")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -115,292 +119,63 @@ async def mix_request(data: MixRequest):
 @app.post("/simulate_beam")
 async def beam_request(config: BeamRequest):
     try:
-        res = config.resolution 
-        # OPTIMIZED: Adjusted to 3:4 aspect ratio for wider display
-        min_x, max_x = -25, 25   # Wider (was -20, 20)
-        min_y, max_y = -5, 35    # Keep same vertical range
+        # Create System
+        system = BeamSystem(resolution=config.resolution)
         
-        x = np.linspace(min_x, max_x, res)
-        y = np.linspace(min_y, max_y, res)
-        X, Y = np.meshgrid(x, y)
-
-        total_field = np.zeros_like(X, dtype=np.float64)
-        antenna_draw_list = [] 
-
+        # Configure Arrays
         for arr_cfg in config.arrays:
-            # Normalize curvature
-            curve_val = arr_cfg.get('curve', 0) / 500.0 
-            
-            # Get antenna offsets if provided
-            antenna_offsets = arr_cfg.get('antennaOffsets', {})
-            
-            # Get custom spacing (default to 0.5 for lambda/2)
-            spacing = arr_cfg.get('spacing', 0.5)
-            
             array = PhasedArray(
                 num_elements=arr_cfg['count'],
                 geometry=arr_cfg['geo'],
-                curvature=curve_val,
+                curvature=arr_cfg.get('curve', 0) / 500.0,
                 position=(arr_cfg.get('x', 0.0), arr_cfg.get('y', 0.0)),
-                frequency=6e8,
-                spacing_factor=spacing  # NEW: Custom spacing
+                spacing_factor=arr_cfg.get('spacing', 0.5)
             )
             
-            # Apply individual antenna offsets
-            if antenna_offsets:
-                for idx_str, offset in antenna_offsets.items():
-                    idx = int(idx_str)
-                    if idx < len(array.element_positions):
-                        array.element_positions[idx, 0] += offset.get('x', 0)
-                        array.element_positions[idx, 1] += offset.get('y', 0)
+            array.set_steering(arr_cfg['steering'])
             
-            # 1. Compute Field
-            field = array.calculate_interference_map(
-                steering_angle_deg=arr_cfg['steering'],
-                grid_x=X,
-                grid_y=Y
-            )
-            total_field += field
+            # Apply individual offsets (Fixing the logic gap)
+            if 'antennaOffsets' in arr_cfg:
+                array.apply_offsets(arr_cfg['antennaOffsets'])
+                
+            system.add_array(array)
 
-            # 2. Compute Antenna Pixel Coordinates for Drawing
-            global_positions = array.element_positions + array.position
+        # Run Simulation
+        system.simulate()
+        
+        # Render
+        img_bytes = system.render_heatmap()
+        return to_base64_response(img_bytes, "map")
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/get_beam_profile")
+async def get_beam_profile(config: BeamRequest):
+    try:
+        if not config.arrays:
+            raise ValueError("No arrays provided")
+        
+        arr_cfg = config.arrays[0]
+        
+        # Create Array Object
+        array = PhasedArray(
+            num_elements=arr_cfg['count'],
+            geometry=arr_cfg['geo'],
+            curvature=arr_cfg.get('curve', 0) / 500.0,
+            spacing_factor=arr_cfg.get('spacing', 0.5)
+        )
+        
+        array.set_steering(arr_cfg['steering'])
+        
+        # Apply offsets (Crucial for correct profile)
+        if 'antennaOffsets' in arr_cfg:
+            array.apply_offsets(arr_cfg['antennaOffsets'])
             
-            for i in range(len(global_positions)):
-                phys_x = global_positions[i, 0]
-                phys_y = global_positions[i, 1]
-                
-                # Normalize coordinates to 0..1
-                norm_x = (phys_x - min_x) / (max_x - min_x)
-                norm_y = (phys_y - min_y) / (max_y - min_y)
-                
-                px_col = int(np.clip(norm_x * res, 0, res - 1))
-                px_row = int(np.clip((1 - norm_y) * res, 0, res - 1))
-                
-                antenna_draw_list.append((px_col, px_row))
-
-        # Visual Processing
-        abs_field = np.abs(total_field)
-        log_field = np.log1p(abs_field)
+        # Render
+        img_bytes = array.render_polar_plot()
+        return to_base64_response(img_bytes, "profile")
         
-        norm = cv2.normalize(log_field, None, 0, 255, cv2.NORM_MINMAX)
-        colored = cv2.applyColorMap(np.uint8(norm), cv2.COLORMAP_JET)
-        
-        # Flip so Y=0 is physically at the bottom
-        colored = cv2.flip(colored, 0) 
-        
-        # --- DRAW DOTS (Antennas) ---
-        for (col, row) in antenna_draw_list:
-             cv2.circle(colored, (col, row), 6, (0, 0, 255), -1)   # Red Dot
-             cv2.circle(colored, (col, row), 7, (255, 255, 255), 2) # White Border
-
-        _, buffer = cv2.imencode('.png', colored)
-        b64 = base64.b64encode(buffer).decode()
-        return {"map": f"data:image/png;base64,{b64}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/get_beam_profile")
-async def get_beam_profile(config: BeamRequest):
-    try:
-        if not config.arrays:
-            raise ValueError("No arrays provided")
-        arr = config.arrays[0]
-        
-        angles_deg = np.linspace(-90, 90, 360)
-        curve_val = arr.get('curve', 0) / 500.0
-        spacing = arr.get('spacing', 0.5)
-        
-        # Get antenna offsets
-        antenna_offsets = arr.get('antennaOffsets', {})
-        
-        # Create array with custom spacing
-        array = PhasedArray(
-            num_elements=arr['count'],
-            geometry=arr['geo'],
-            curvature=curve_val,
-            position=(arr.get('x', 0.0), arr.get('y', 0.0)),
-            frequency=6e8,
-            spacing_factor=spacing
-        )
-        
-        # Apply individual antenna offsets
-        if antenna_offsets:
-            for idx_str, offset in antenna_offsets.items():
-                idx = int(idx_str)
-                if idx < len(array.element_positions):
-                    array.element_positions[idx, 0] += offset.get('x', 0)
-                    array.element_positions[idx, 1] += offset.get('y', 0)
-        
-        # Compute array factor
-        _, af_mag = PhasedArray.compute_array_factor(
-            num_elements=arr['count'],
-            steering_angle_deg=arr['steering'],
-            test_angles_deg=angles_deg,
-            geometry=arr['geo'],
-            curvature=curve_val,
-            frequency=6e8,
-            spacing_factor=spacing
-        )
-        
-        # --- Matplotlib Polar Plot ---
-        fig = plt.figure(figsize=(6, 6), dpi=100) 
-        ax = fig.add_subplot(111, polar=True)
-        
-        theta = np.radians(angles_deg)
-        
-        ax.set_theta_zero_location("N")
-        ax.set_theta_direction(-1)
-        ax.set_thetamin(-90)
-        ax.set_thetamax(90)
-        
-        norm_mag = af_mag / (np.max(af_mag) + 1e-9)
-        ax.plot(theta, norm_mag, color='#00FFFF', linewidth=2.5)
-        
-        # Dark Theme Styling
-        fig.patch.set_facecolor('#050505') 
-        ax.set_facecolor('#111')       
-        ax.tick_params(axis='x', colors='white', labelsize=8)
-        ax.tick_params(axis='y', colors='white', labelsize=8)
-        ax.spines['polar'].set_visible(False)
-        ax.grid(color='gray', linestyle=':', alpha=0.3)
-        
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight', facecolor=fig.get_facecolor())
-        buf.seek(0)
-        plt.close(fig)
-        
-        b64 = base64.b64encode(buf.read()).decode()
-        return {"profile": f"data:image/png;base64,{b64}"}
-    except Exception as e:
-        print(e)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Also update /get_beam_profile endpoint similarly:
-@app.post("/get_beam_profile")
-async def get_beam_profile(config: BeamRequest):
-    try:
-        if not config.arrays:
-            raise ValueError("No arrays provided")
-        arr = config.arrays[0]
-        
-        angles_deg = np.linspace(-90, 90, 360)
-        curve_val = arr.get('curve', 0) / 500.0
-        
-        # Get antenna offsets
-        antenna_offsets = arr.get('antennaOffsets', {})
-        
-        # Create array
-        array = PhasedArray(
-            num_elements=arr['count'],
-            geometry=arr['geo'],
-            curvature=curve_val,
-            position=(arr.get('x', 0.0), arr.get('y', 0.0)),
-            frequency=6e8
-        )
-        
-        # Apply individual antenna offsets
-        if antenna_offsets:
-            for idx_str, offset in antenna_offsets.items():
-                idx = int(idx_str)
-                if idx < len(array.element_positions):
-                    array.element_positions[idx, 0] += offset.get('x', 0)
-                    array.element_positions[idx, 1] += offset.get('y', 0)
-        
-        # Compute array factor with modified positions
-        _, af_mag = PhasedArray.compute_array_factor(
-            num_elements=arr['count'],
-            steering_angle_deg=arr['steering'],
-            test_angles_deg=angles_deg,
-            geometry=arr['geo'],
-            curvature=curve_val,
-            frequency=6e8
-        )
-        
-        # --- Matplotlib Polar Plot ---
-        fig = plt.figure(figsize=(6, 6), dpi=100) 
-        ax = fig.add_subplot(111, polar=True)
-        
-        theta = np.radians(angles_deg)
-        
-        ax.set_theta_zero_location("N")
-        ax.set_theta_direction(-1)
-        ax.set_thetamin(-90)
-        ax.set_thetamax(90)
-        
-        norm_mag = af_mag / (np.max(af_mag) + 1e-9)
-        ax.plot(theta, norm_mag, color='#00FFFF', linewidth=2.5)
-        
-        # Dark Theme Styling
-        fig.patch.set_facecolor('#050505') 
-        ax.set_facecolor('#111')       
-        ax.tick_params(axis='x', colors='white', labelsize=8)
-        ax.tick_params(axis='y', colors='white', labelsize=8)
-        ax.spines['polar'].set_visible(False)
-        ax.grid(color='gray', linestyle=':', alpha=0.3)
-        
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight', facecolor=fig.get_facecolor())
-        buf.seek(0)
-        plt.close(fig)
-        
-        b64 = base64.b64encode(buf.read()).decode()
-        return {"profile": f"data:image/png;base64,{b64}"}
-    except Exception as e:
-        print(e)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/get_beam_profile")
-async def get_beam_profile(config: BeamRequest):
-    try:
-        if not config.arrays:
-            raise ValueError("No arrays provided")
-        arr = config.arrays[0]
-        
-        angles_deg = np.linspace(-90, 90, 360)
-        
-        curve_val = arr.get('curve', 0) / 500.0
-        
-        # Use same frequency as map (6e8) for consistency
-        _, af_mag = PhasedArray.compute_array_factor(
-            num_elements=arr['count'],
-            steering_angle_deg=arr['steering'],
-            test_angles_deg=angles_deg,
-            geometry=arr['geo'],
-            curvature=curve_val,
-            frequency=6e8
-        )
-        
-        # --- Matplotlib Polar Plot (Matches GitHub Style) ---
-        fig = plt.figure(figsize=(6, 6), dpi=100) 
-        ax = fig.add_subplot(111, polar=True)
-        
-        theta = np.radians(angles_deg)
-        
-        ax.set_theta_zero_location("N") # 0 deg at top
-        ax.set_theta_direction(-1)      # Clockwise
-        ax.set_thetamin(-90)
-        ax.set_thetamax(90)
-        
-        norm_mag = af_mag / (np.max(af_mag) + 1e-9)
-        ax.plot(theta, norm_mag, color='#00FFFF', linewidth=2.5) # Cyan Line
-        
-        # Dark Theme Styling
-        fig.patch.set_facecolor('#050505') 
-        ax.set_facecolor('#111')       
-        ax.tick_params(axis='x', colors='white', labelsize=8)
-        ax.tick_params(axis='y', colors='white', labelsize=8)
-        ax.spines['polar'].set_visible(False)
-        ax.grid(color='gray', linestyle=':', alpha=0.3)
-        
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight', facecolor=fig.get_facecolor())
-        buf.seek(0)
-        plt.close(fig)
-        
-        b64 = base64.b64encode(buf.read()).decode()
-        return {"profile": f"data:image/png;base64,{b64}"}
     except Exception as e:
         print(e)
         raise HTTPException(status_code=500, detail=str(e))
