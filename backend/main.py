@@ -1,15 +1,45 @@
 # backend/main.py
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import base64
 import matplotlib
+import sys
 
+# Configure matplotlib backend to avoid GUI errors
 matplotlib.use('Agg')
 
-from core.image_processor import ImageModel, MixerService, ImagePresenter
+# --- Local Imports ---
+from core.interfaces import IImageRepository, IImageEncoder, IMixerService
+from core.image_processor import ImageModel, MixerService, PNGEncoder
+from core.storage import InMemoryImageRepository
 from core.beamformer import PhasedArray, BeamSystem
 
+# --- DI Container ---
+class AppContainer:
+    """
+    Simple Dependency Injection Container.
+    Initializes singletons for the application.
+    """
+    def __init__(self):
+        self.image_repository = InMemoryImageRepository(capacity=4)
+        self.mixer_service = MixerService()
+        self.encoder = PNGEncoder()
+
+# Instantiate container
+container = AppContainer()
+
+# --- Dependency Providers ---
+def get_repository() -> IImageRepository:
+    return container.image_repository
+
+def get_mixer_service() -> IMixerService:
+    return container.mixer_service
+
+def get_encoder() -> IImageEncoder:
+    return container.encoder
+
+# --- FastAPI Setup ---
 app = FastAPI()
 
 app.add_middleware(
@@ -19,28 +49,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Dependency Injection & State Management ---
-
-class ImageRepository:
-    """Encapsulates in-memory storage."""
-    def __init__(self):
-        self._storage = {}
-        self._capacity = 4
-
-    def save(self, slot_id: int, image: ImageModel):
-        if not (0 <= slot_id < self._capacity):
-            raise ValueError(f"Slot ID must be 0-{self._capacity-1}")
-        self._storage[slot_id] = image
-
-    def get(self, slot_id: int) -> ImageModel:
-        return self._storage.get(slot_id, ImageModel())
-
-    def get_all(self):
-        return [self.get(i) for i in range(self._capacity)]
-
-repo = ImageRepository()
-mixer_service = MixerService()
-
 # --- Pydantic Models ---
 class ComponentRequest(BaseModel):
     id: int
@@ -48,7 +56,7 @@ class ComponentRequest(BaseModel):
 
 class MixRequest(BaseModel):
     weights: list[dict]
-    region_types: list[str]  # UPDATED: Now an array of 4 types
+    region_types: list[str]
     region_width: float
     region_height: float
     region_x: float
@@ -67,7 +75,11 @@ def to_base64_response(img_bytes: bytes, key: str):
 # --- Endpoints ---
 
 @app.post("/upload/{img_id}")
-async def upload_image(img_id: int, file: UploadFile = File(...)):
+async def upload_image(
+    img_id: int, 
+    file: UploadFile = File(...),
+    repo: IImageRepository = Depends(get_repository)
+):
     try:
         contents = await file.read()
         image = ImageModel(contents)
@@ -77,22 +89,34 @@ async def upload_image(img_id: int, file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/get_component")
-async def get_component_view(req: ComponentRequest):
+async def get_component_view(
+    req: ComponentRequest,
+    repo: IImageRepository = Depends(get_repository),
+    encoder: IImageEncoder = Depends(get_encoder)
+):
     try:
         image = repo.get(req.id)
         raw_data = image.get_component_data(req.type_str)
-        img_bytes = ImagePresenter.encode_to_bytes(raw_data)
+        
+        # FIXED: Use injected encoder instance instead of static method
+        img_bytes = encoder.encode(raw_data)
+        
         return to_base64_response(img_bytes, "image")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/process_mix")
-async def mix_request(data: MixRequest):
+async def mix_request(
+    data: MixRequest,
+    repo: IImageRepository = Depends(get_repository),
+    mixer: IMixerService = Depends(get_mixer_service),
+    encoder: IImageEncoder = Depends(get_encoder)
+):
     try:
         images = repo.get_all()
         
-        # UPDATED: Pass each image's region type separately
-        result_data = mixer_service.mix_images_per_type(
+        # Use injected mixer service
+        result_data = mixer.mix_images_per_type(
             images=images,
             weights=data.weights,
             region_types=data.region_types,
@@ -103,12 +127,16 @@ async def mix_request(data: MixRequest):
             mode=data.mix_mode
         )
         
-        img_bytes = ImagePresenter.encode_to_bytes(result_data)
+        # Use injected encoder
+        img_bytes = encoder.encode(result_data)
+        
         return to_base64_response(img_bytes, "image")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- BEAMFORMING ENDPOINTS ---
+# Note: BeamSystem is not yet refactored into the DI container as per Phase 1,
+# but it could be added similarly later.
 
 @app.post("/simulate_beam")
 async def beam_request(config: BeamRequest):
@@ -125,7 +153,6 @@ async def beam_request(config: BeamRequest):
             )
             
             array.set_steering(arr_cfg['steering'])
-            
             if 'antennaOffsets' in arr_cfg:
                 array.apply_offsets(arr_cfg['antennaOffsets'])
                 
@@ -145,7 +172,6 @@ async def get_beam_profile(config: BeamRequest):
             raise ValueError("No arrays provided")
         
         arr_cfg = config.arrays[0]
-        
         array = PhasedArray(
             num_elements=arr_cfg['count'],
             geometry=arr_cfg['geo'],
@@ -154,7 +180,6 @@ async def get_beam_profile(config: BeamRequest):
         )
         
         array.set_steering(arr_cfg['steering'])
-        
         if 'antennaOffsets' in arr_cfg:
             array.apply_offsets(arr_cfg['antennaOffsets'])
             
@@ -162,5 +187,4 @@ async def get_beam_profile(config: BeamRequest):
         return to_base64_response(img_bytes, "profile")
         
     except Exception as e:
-        print(e)
         raise HTTPException(status_code=500, detail=str(e))

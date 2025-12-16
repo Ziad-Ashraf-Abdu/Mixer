@@ -1,7 +1,8 @@
 # backend/core/image_processor.py
 import numpy as np
 import cv2
-from typing import Literal
+from typing import Literal, List, Dict
+from .interfaces import IImageEncoder, IMixerService
 
 class ImageModel:
     """
@@ -19,6 +20,7 @@ class ImageModel:
             
         self.shape = self.original.shape
         
+        # Calculate FFT
         fft_full = np.fft.fft2(self.original)
         self.fft_shifted = np.fft.fftshift(fft_full)
         
@@ -39,24 +41,27 @@ class ImageModel:
         else:
             return self.original
 
-class ImagePresenter:
+class PNGEncoder(IImageEncoder):
     """
-    View Logic: Handles normalization and encoding of image data for the API.
+    Concrete implementation of IImageEncoder for PNG format.
+    Replaces the old static ImagePresenter.
     """
-    @staticmethod
-    def encode_to_bytes(data: np.ndarray) -> bytes:
+    def encode(self, data: np.ndarray) -> bytes:
         clean_data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
         
+        # Normalize if not already uint8
         if clean_data.dtype != np.uint8:
             norm = cv2.normalize(clean_data, None, 0, 255, cv2.NORM_MINMAX)
             final_img = np.uint8(norm)
         else:
             final_img = clean_data
             
-        _, buffer = cv2.imencode('.png', final_img)
+        success, buffer = cv2.imencode('.png', final_img)
+        if not success:
+            raise ValueError("Could not encode image to PNG")
         return buffer.tobytes()
 
-class MixerService:
+class MixerService(IMixerService):
     """
     Service class encapsulating the business logic for image mixing.
     """
@@ -69,9 +74,7 @@ class MixerService:
                             region_x: float,
                             region_y: float,
                             mode: str) -> np.ndarray:
-        """
-        Mix images with individual region type (inner/outer) per image.
-        """
+        
         if not images:
             raise ValueError("No images provided")
 
@@ -125,7 +128,6 @@ class MixerService:
                 w_mag = weights[i].get('magnitude', 0.0)
                 w_phase = weights[i].get('phase', 0.0)
                 
-                # Apply mask to each image's contribution
                 mixed_mag += (img.magnitude * w_mag) * masks[i]
                 mixed_phase += (img.phase * w_phase) * masks[i]
         
@@ -140,7 +142,6 @@ class MixerService:
                 w_real = weights[i].get('real', 0.0)
                 w_imag = weights[i].get('imag', 0.0)
                 
-                # Apply mask to each image's contribution
                 mixed_real += (img.real * w_real) * masks[i]
                 mixed_imag += (img.imag * w_imag) * masks[i]
 
