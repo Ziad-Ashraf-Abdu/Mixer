@@ -1,124 +1,272 @@
 // components/Mixer/MixerControls.jsx
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from "react";
 
-const MixerControls = ({ weights, setWeights, region, setRegion, mixMode, setMixMode, onProcess, isProcessing }) => {
+const MixerControls = ({
+  weights,
+  setWeights,
+  region,
+  setRegion,
+  regionTypes,
+  mixMode,
+  setMixMode,
+  onProcess,
+  isProcessing,
+}) => {
+  const [statusText, setStatusText] = useState("READY TO CAST");
+  const isFirstRun = useRef(true);
 
-    const [statusText, setStatusText] = useState("READY TO CAST");
-    const isFirstRun = useRef(true);
+  // --- AUTO-CAST LOGIC ---
+  useEffect(() => {
+    if (isFirstRun.current) {
+      isFirstRun.current = false;
+      return;
+    }
 
-    // --- AUTO-CAST LOGIC ---
-    useEffect(() => {
-        if (isFirstRun.current) {
-            isFirstRun.current = false;
-            return;
-        }
+    setStatusText("CHANNELLING MANA...");
 
-        setStatusText("CHANNELLING MANA...");
+    const timer = setTimeout(() => {
+      onProcess();
+    }, 1000);
 
-        const timer = setTimeout(() => {
-            onProcess();
-        }, 1000);
+    return () => clearTimeout(timer);
+  }, [weights, region, regionTypes, mixMode]); // UPDATED: Added regionTypes to dependencies
 
-        return () => clearTimeout(timer);
-    }, [weights, region, mixMode]);
+  useEffect(() => {
+    if (isProcessing) {
+      setStatusText("CASTING ANTI-MAGIC...");
+    } else if (!isProcessing && statusText === "CASTING ANTI-MAGIC...") {
+      setStatusText("SPELL ACTIVE");
+    }
+  }, [isProcessing]);
 
-    useEffect(() => {
-        if (isProcessing) {
-            setStatusText("CASTING ANTI-MAGIC...");
-        } else if (!isProcessing && statusText === "CASTING ANTI-MAGIC...") {
-            setStatusText("SPELL ACTIVE");
-        }
-    }, [isProcessing]);
+  const handleWeightChange = (imgIndex, type, val) => {
+    const newWeights = [...weights];
+    newWeights[imgIndex] = { ...newWeights[imgIndex], [type]: parseFloat(val) };
+    setWeights(newWeights);
+  };
 
+  const labelStyle = {
+    display: "flex",
+    justifyContent: "space-between",
+    fontSize: "0.65rem",
+    color: "#888",
+    fontFamily: "Lato",
+  };
+  const isMagPhase = mixMode === "mag-phase";
 
-    const handleWeightChange = (imgIndex, type, val) => {
-        const newWeights = [...weights];
-        newWeights[imgIndex] = { ...newWeights[imgIndex], [type]: parseFloat(val) };
-        setWeights(newWeights);
-    };
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      <div
+        style={{
+          padding: "10px",
+          background: "#0a0a0c",
+          borderBottom: "1px solid #333",
+          textAlign: "center",
+        }}
+      >
+        <h3
+          style={{
+            margin: 0,
+            fontSize: "0.9rem",
+            color: "#c5a059",
+            fontFamily: "Cinzel",
+            letterSpacing: "2px",
+          }}
+        >
+          MANA MIXER
+        </h3>
+      </div>
 
-    const labelStyle = { display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: '#888', fontFamily: 'Lato' };
-    const isMagPhase = mixMode === 'mag-phase';
+      {/* Mixing Mode Toggle */}
+      <div
+        style={{
+          padding: "0 10px 10px",
+          display: "flex",
+          gap: "2px",
+          background: "rgba(0,0,0,0.4)",
+        }}
+      >
+        <button
+          style={{
+            flex: 1,
+            padding: "4px",
+            fontSize: "0.65rem",
+            border: "1px solid #333",
+            cursor: "pointer",
+            fontFamily: "Cinzel",
+            background: isMagPhase ? "#c5a059" : "#111",
+            color: isMagPhase ? "#000" : "#666",
+          }}
+          onClick={() => setMixMode("mag-phase")}
+        >
+          MAG/PHASE
+        </button>
+        <button
+          style={{
+            flex: 1,
+            padding: "4px",
+            fontSize: "0.65rem",
+            border: "1px solid #333",
+            cursor: "pointer",
+            fontFamily: "Cinzel",
+            background: !isMagPhase ? "#d32f2f" : "#111",
+            color: !isMagPhase ? "#fff" : "#666",
+          }}
+          onClick={() => setMixMode("real-imag")}
+        >
+          REAL/IMAG
+        </button>
+      </div>
 
-    return (
-        <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ padding: '10px', background: '#0a0a0c', borderBottom: '1px solid #333', textAlign:'center' }}>
-                <h3 style={{ margin: 0, fontSize: '0.9rem', color: '#c5a059', fontFamily: 'Cinzel', letterSpacing: '2px' }}>
-                    MANA MIXER
-                </h3>
+      <div style={{ flex: 1, padding: "10px", overflowY: "auto" }}>
+        {[0, 1, 2, 3].map((i) => (
+          <div
+            key={i}
+            style={{
+              marginBottom: "10px",
+              background: "rgba(0,0,0,0.4)",
+              padding: "8px",
+              borderLeft: "2px solid #c5a059",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "4px",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: "0.7rem",
+                  color: "#fff",
+                  fontFamily: "Cinzel",
+                }}
+              >
+                GRIMOIRE PAGE {i + 1}
+              </div>
+              {/* Region Type Badge */}
+              <div
+                style={{
+                  fontSize: "0.55rem",
+                  padding: "2px 6px",
+                  borderRadius: "3px",
+                  fontFamily: "Lato",
+                  fontWeight: "bold",
+                  background:
+                    regionTypes[i] === "inner"
+                      ? "rgba(197, 160, 89, 0.2)"
+                      : "rgba(50, 50, 50, 0.5)",
+                  color: regionTypes[i] === "inner" ? "#c5a059" : "#999",
+                  border: `1px solid ${
+                    regionTypes[i] === "inner" ? "#c5a059" : "#555"
+                  }`,
+                }}
+              >
+                {regionTypes[i].toUpperCase()}
+              </div>
             </div>
 
-            {/* Mixing Mode Toggle */}
-            <div style={{ padding: '0 10px 10px', display: 'flex', gap: '2px', background: 'rgba(0,0,0,0.4)' }}>
-                <button
-                    style={{
-                        flex: 1, padding: '4px', fontSize: '0.65rem', border:'1px solid #333', cursor: 'pointer', fontFamily: 'Cinzel',
-                        background: isMagPhase ? '#c5a059' : '#111',
-                        color: isMagPhase ? '#000' : '#666'
-                    }}
-                    onClick={() => setMixMode('mag-phase')}
-                >
-                    MAG/PHASE
-                </button>
-                <button
-                    style={{
-                        flex: 1, padding: '4px', fontSize: '0.65rem', border:'1px solid #333', cursor: 'pointer', fontFamily: 'Cinzel',
-                        background: !isMagPhase ? '#d32f2f' : '#111',
-                        color: !isMagPhase ? '#fff' : '#666'
-                    }}
-                    onClick={() => setMixMode('real-imag')}
-                >
-                    REAL/IMAG
-                </button>
-            </div>
+            {isMagPhase ? (
+              <>
+                <div style={labelStyle}>
+                  <span>Magnitude</span>
+                  <span style={{ color: "#c5a059" }}>
+                    {weights[i].magnitude?.toFixed(1)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                  value={weights[i].magnitude || 0}
+                  onChange={(e) =>
+                    handleWeightChange(i, "magnitude", e.target.value)
+                  }
+                />
 
-            <div style={{ flex: 1, padding: '10px', overflowY: 'auto' }}>
-                {[0, 1, 2, 3].map(i => (
-                    <div key={i} style={{ marginBottom: '10px', background: 'rgba(0,0,0,0.4)', padding: '8px', borderLeft: '2px solid #c5a059' }}>
-                        <div style={{ fontSize: '0.7rem', color: '#fff', marginBottom: '4px', fontFamily: 'Cinzel' }}>
-                            GRIMOIRE PAGE {i + 1}
-                        </div>
+                <div style={labelStyle}>
+                  <span>Phase</span>
+                  <span style={{ color: "#d32f2f" }}>
+                    {weights[i].phase?.toFixed(1)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                  value={weights[i].phase || 0}
+                  onChange={(e) =>
+                    handleWeightChange(i, "phase", e.target.value)
+                  }
+                />
+              </>
+            ) : (
+              <>
+                <div style={labelStyle}>
+                  <span>Real</span>
+                  <span style={{ color: "#c5a059" }}>
+                    {weights[i].real?.toFixed(1)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                  value={weights[i].real || 0}
+                  onChange={(e) =>
+                    handleWeightChange(i, "real", e.target.value)
+                  }
+                />
 
-                        {isMagPhase ? (
-                            <>
-                                <div style={labelStyle}><span>Magnitude</span><span style={{color: '#c5a059'}}>{weights[i].magnitude?.toFixed(1)}</span></div>
-                                <input type="range" min="0" max="1" step="0.1" value={weights[i].magnitude || 0}
-                                       onChange={(e) => handleWeightChange(i, 'magnitude', e.target.value)} />
+                <div style={labelStyle}>
+                  <span>Imag</span>
+                  <span style={{ color: "#d32f2f" }}>
+                    {weights[i].imag?.toFixed(1)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                  value={weights[i].imag || 0}
+                  onChange={(e) =>
+                    handleWeightChange(i, "imag", e.target.value)
+                  }
+                />
+              </>
+            )}
+          </div>
+        ))}
+      </div>
 
-                                <div style={labelStyle}><span>Phase</span><span style={{color: '#d32f2f'}}>{weights[i].phase?.toFixed(1)}</span></div>
-                                <input type="range" min="0" max="1" step="0.1" value={weights[i].phase || 0}
-                                       onChange={(e) => handleWeightChange(i, 'phase', e.target.value)} />
-                            </>
-                        ) : (
-                            <>
-                                <div style={labelStyle}><span>Real</span><span style={{color: '#c5a059'}}>{weights[i].real?.toFixed(1)}</span></div>
-                                <input type="range" min="0" max="1" step="0.1" value={weights[i].real || 0}
-                                       onChange={(e) => handleWeightChange(i, 'real', e.target.value)} />
-
-                                <div style={labelStyle}><span>Imag</span><span style={{color: '#d32f2f'}}>{weights[i].imag?.toFixed(1)}</span></div>
-                                <input type="range" min="0" max="1" step="0.1" value={weights[i].imag || 0}
-                                       onChange={(e) => handleWeightChange(i, 'imag', e.target.value)} />
-                            </>
-                        )}
-                    </div>
-                ))}
-
-                {/* Region Filter Instructions */}
-            </div>
-
-            {/* Status Bar */}
-            <div style={{
-                padding: '12px', background: '#0a0a0c', borderTop: '1px solid #333',
-                textAlign: 'center', fontFamily: 'Cinzel', fontSize: '0.8rem',
-                color: statusText.includes('CHANNELLING') ? '#aaa' :
-                    statusText.includes('CASTING') ? '#fff' : '#c5a059',
-                letterSpacing: '1px'
-            }}>
-                {statusText}
-                {isProcessing && <span style={{marginLeft: '10px'}}>✨</span>}
-            </div>
-        </div>
-    );
+      {/* Status Bar */}
+      <div
+        style={{
+          padding: "12px",
+          background: "#0a0a0c",
+          borderTop: "1px solid #333",
+          textAlign: "center",
+          fontFamily: "Cinzel",
+          fontSize: "0.8rem",
+          color: statusText.includes("CHANNELLING")
+            ? "#aaa"
+            : statusText.includes("CASTING")
+            ? "#fff"
+            : "#c5a059",
+          letterSpacing: "1px",
+        }}
+      >
+        {statusText}
+        {isProcessing && <span style={{ marginLeft: "10px" }}>✨</span>}
+      </div>
+    </div>
+  );
 };
 
 export default MixerControls;

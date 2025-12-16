@@ -27,13 +27,21 @@ function App() {
     { magnitude: 0, phase: 0 },
   ]);
 
+  // UPDATED: Separated position/size from type selection
   const [region, setRegion] = useState({
-    type: "inner",
     width: 0.5,
     height: 0.5,
     x: 0.5,
     y: 0.5,
   });
+
+  // NEW: Individual inner/outer selection per image
+  const [regionTypes, setRegionTypes] = useState([
+    "inner",
+    "inner",
+    "inner",
+    "inner",
+  ]);
 
   const [mixMode, setMixMode] = useState("mag-phase");
   const [selectedPort, setSelectedPort] = useState(1);
@@ -43,7 +51,6 @@ function App() {
   const mixAbortControllerRef = useRef(null);
 
   // --- Beamforming State ---
-  // Initialize with 5G default configuration
   const [beamArrays, setBeamArrays] = useState([
     {
       count: 32,
@@ -62,14 +69,11 @@ function App() {
   const [beamMap, setBeamMap] = useState(null);
   const [beamProfileImg, setBeamProfileImg] = useState(null);
   const beamAbortControllerRef = useRef(null);
-
-  // Track if beamforming has been initialized
   const beamInitialized = useRef(false);
 
   // --- Auto-load 5G when switching to beamforming tab ---
   useEffect(() => {
     if (activeTab === "beamforming" && !beamInitialized.current) {
-      // Reset to 5G defaults when entering beamforming for first time
       setBeamArrays([
         {
           count: 32,
@@ -120,7 +124,7 @@ function App() {
     try {
       const payload = {
         weights,
-        region_type: region.type,
+        region_types: regionTypes, // UPDATED: Send array of types
         region_width: region.width,
         region_height: region.height,
         region_x: region.x,
@@ -255,6 +259,12 @@ function App() {
                   onUpload={handleUpload}
                   region={region}
                   setRegion={setRegion}
+                  regionType={regionTypes[idx]}
+                  setRegionType={(newType) => {
+                    const newTypes = [...regionTypes];
+                    newTypes[idx] = newType;
+                    setRegionTypes(newTypes);
+                  }}
                 />
               ))}
             </div>
@@ -271,6 +281,7 @@ function App() {
                 setWeights={setWeights}
                 region={region}
                 setRegion={setRegion}
+                regionTypes={regionTypes}
                 mixMode={mixMode}
                 setMixMode={setMixMode}
                 onProcess={handleMix}
@@ -322,7 +333,6 @@ function App() {
                 overflow: "hidden",
               }}
             >
-              {/* TOP: Interference Map (Bigger: 2) */}
               <div
                 style={{
                   flex: 2,
@@ -334,7 +344,6 @@ function App() {
                 <InterferenceMap mapImage={beamMap} isLoading={!beamMap} />
               </div>
 
-              {/* BOTTOM: Beam Profile (Smaller: 1.0) */}
               <div
                 style={{
                   flex: 1.0,

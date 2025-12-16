@@ -5,7 +5,6 @@ from pydantic import BaseModel
 import base64
 import matplotlib
 
-# Set backend before importing pyplot logic (via beamformer)
 matplotlib.use('Agg')
 
 from core.image_processor import ImageModel, MixerService, ImagePresenter
@@ -34,13 +33,11 @@ class ImageRepository:
         self._storage[slot_id] = image
 
     def get(self, slot_id: int) -> ImageModel:
-        # Return existing or a blank default
         return self._storage.get(slot_id, ImageModel())
 
     def get_all(self):
         return [self.get(i) for i in range(self._capacity)]
 
-# Instantiate Dependencies
 repo = ImageRepository()
 mixer_service = MixerService()
 
@@ -51,7 +48,7 @@ class ComponentRequest(BaseModel):
 
 class MixRequest(BaseModel):
     weights: list[dict]
-    region_type: str
+    region_types: list[str]  # UPDATED: Now an array of 4 types
     region_width: float
     region_height: float
     region_x: float
@@ -94,18 +91,15 @@ async def mix_request(data: MixRequest):
     try:
         images = repo.get_all()
         
-        region_config = {
-            "region_type": data.region_type,
-            "width_pct": data.region_width,
-            "height_pct": data.region_height,
-            "x_pct": data.region_x,
-            "y_pct": data.region_y
-        }
-
-        result_data = mixer_service.mix_images(
+        # UPDATED: Pass each image's region type separately
+        result_data = mixer_service.mix_images_per_type(
             images=images,
             weights=data.weights,
-            region_config=region_config,
+            region_types=data.region_types,
+            region_width=data.region_width,
+            region_height=data.region_height,
+            region_x=data.region_x,
+            region_y=data.region_y,
             mode=data.mix_mode
         )
         
@@ -119,10 +113,8 @@ async def mix_request(data: MixRequest):
 @app.post("/simulate_beam")
 async def beam_request(config: BeamRequest):
     try:
-        # Create System
         system = BeamSystem(resolution=config.resolution)
         
-        # Configure Arrays
         for arr_cfg in config.arrays:
             array = PhasedArray(
                 num_elements=arr_cfg['count'],
@@ -134,16 +126,12 @@ async def beam_request(config: BeamRequest):
             
             array.set_steering(arr_cfg['steering'])
             
-            # Apply individual offsets (Fixing the logic gap)
             if 'antennaOffsets' in arr_cfg:
                 array.apply_offsets(arr_cfg['antennaOffsets'])
                 
             system.add_array(array)
 
-        # Run Simulation
         system.simulate()
-        
-        # Render
         img_bytes = system.render_heatmap()
         return to_base64_response(img_bytes, "map")
         
@@ -158,7 +146,6 @@ async def get_beam_profile(config: BeamRequest):
         
         arr_cfg = config.arrays[0]
         
-        # Create Array Object
         array = PhasedArray(
             num_elements=arr_cfg['count'],
             geometry=arr_cfg['geo'],
@@ -168,11 +155,9 @@ async def get_beam_profile(config: BeamRequest):
         
         array.set_steering(arr_cfg['steering'])
         
-        # Apply offsets (Crucial for correct profile)
         if 'antennaOffsets' in arr_cfg:
             array.apply_offsets(arr_cfg['antennaOffsets'])
             
-        # Render
         img_bytes = array.render_polar_plot()
         return to_base64_response(img_bytes, "profile")
         

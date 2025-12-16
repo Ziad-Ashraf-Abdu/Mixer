@@ -15,16 +15,13 @@ class ImageModel:
                 raise ValueError("Invalid image file")
             self.original = cv2.resize(img, shape)
         else:
-            # Create blank if no bytes provided
             self.original = np.zeros(shape, dtype=np.uint8)
             
         self.shape = self.original.shape
         
-        # FFT Computation
         fft_full = np.fft.fft2(self.original)
         self.fft_shifted = np.fft.fftshift(fft_full)
         
-        # Components
         self.magnitude = np.abs(self.fft_shifted)
         self.phase = np.angle(self.fft_shifted)
         self.real = np.real(self.fft_shifted)
@@ -45,14 +42,11 @@ class ImageModel:
 class ImagePresenter:
     """
     View Logic: Handles normalization and encoding of image data for the API.
-    Separates the data (ImageModel) from how it's viewed.
     """
     @staticmethod
     def encode_to_bytes(data: np.ndarray) -> bytes:
-        # Handle non-finite numbers
         clean_data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
         
-        # Normalize if not uint8
         if clean_data.dtype != np.uint8:
             norm = cv2.normalize(clean_data, None, 0, 255, cv2.NORM_MINMAX)
             final_img = np.uint8(norm)
@@ -66,30 +60,45 @@ class MixerService:
     """
     Service class encapsulating the business logic for image mixing.
     """
-    def mix_images(self, 
-                   images: list[ImageModel], 
-                   weights: list[dict], 
-                   region_config: dict,
-                   mode: str) -> np.ndarray:
-        
+    def mix_images_per_type(self, 
+                            images: list[ImageModel], 
+                            weights: list[dict],
+                            region_types: list[str],
+                            region_width: float,
+                            region_height: float,
+                            region_x: float,
+                            region_y: float,
+                            mode: str) -> np.ndarray:
+        """
+        Mix images with individual region type (inner/outer) per image.
+        """
         if not images:
             raise ValueError("No images provided")
 
         shape = images[0].shape
-        mask = self._create_mask(shape, **region_config)
+        
+        # Create mask for each image based on its region type
+        masks = [
+            self._create_mask(
+                shape, 
+                region_types[i] if i < len(region_types) else 'inner',
+                region_width, 
+                region_height, 
+                region_x, 
+                region_y
+            )
+            for i in range(len(images))
+        ]
         
         if mode == 'mag-phase':
-            result_fft = self._mix_mag_phase(images, weights)
+            result_fft = self._mix_mag_phase_with_masks(images, weights, masks)
         elif mode == 'real-imag':
-            result_fft = self._mix_real_imag(images, weights)
+            result_fft = self._mix_real_imag_with_masks(images, weights, masks)
         else:
             raise ValueError("Invalid mix mode")
 
-        # Apply Region Mask
-        mixed_fft_masked = result_fft * mask
-        
         # Inverse FFT
-        fft_unshifted = np.fft.ifftshift(mixed_fft_masked)
+        fft_unshifted = np.fft.ifftshift(result_fft)
         reconstructed = np.fft.ifft2(fft_unshifted)
         return np.abs(reconstructed)
 
@@ -107,28 +116,32 @@ class MixerService:
             return mask_indices.astype(np.float32)
         return (~mask_indices).astype(np.float32)
 
-    def _mix_mag_phase(self, images, weights):
+    def _mix_mag_phase_with_masks(self, images, weights, masks):
         mixed_mag = np.zeros_like(images[0].magnitude)
         mixed_phase = np.zeros_like(images[0].phase)
 
         for i, img in enumerate(images):
-            if i < len(weights):
+            if i < len(weights) and i < len(masks):
                 w_mag = weights[i].get('magnitude', 0.0)
                 w_phase = weights[i].get('phase', 0.0)
-                mixed_mag += img.magnitude * w_mag
-                mixed_phase += img.phase * w_phase
+                
+                # Apply mask to each image's contribution
+                mixed_mag += (img.magnitude * w_mag) * masks[i]
+                mixed_phase += (img.phase * w_phase) * masks[i]
         
         return mixed_mag * np.exp(1j * mixed_phase)
 
-    def _mix_real_imag(self, images, weights):
+    def _mix_real_imag_with_masks(self, images, weights, masks):
         mixed_real = np.zeros_like(images[0].real)
         mixed_imag = np.zeros_like(images[0].imag)
 
         for i, img in enumerate(images):
-            if i < len(weights):
+            if i < len(weights) and i < len(masks):
                 w_real = weights[i].get('real', 0.0)
                 w_imag = weights[i].get('imag', 0.0)
-                mixed_real += img.real * w_real
-                mixed_imag += img.imag * w_imag
+                
+                # Apply mask to each image's contribution
+                mixed_real += (img.real * w_real) * masks[i]
+                mixed_imag += (img.imag * w_imag) * masks[i]
 
         return mixed_real + 1j * mixed_imag
