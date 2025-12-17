@@ -162,7 +162,7 @@ class BeamSystem:
     Composite class to manage the simulation environment and multiple arrays.
     Handles the grid generation and superposition of fields.
     """
-    def __init__(self, resolution=300, min_x=-25, max_x=25, min_y=-5, max_y=35):
+    def __init__(self, resolution=300, min_x=-25, max_x=25, min_y=0, max_y=40):
         self.resolution = resolution
         self.bounds = (min_x, max_x, min_y, max_y)
         self.arrays = []

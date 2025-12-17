@@ -464,8 +464,8 @@ const ArrayConfig = ({
                 <div>Y: {current.y?.toFixed(1)}</div>
                 <input
                   type="range"
-                  min="-10"
-                  max="10"
+                  min="0"
+                  max="40"
                   step="0.1"
                   value={current.y || 0}
                   onChange={(e) => updateArray("y", parseFloat(e.target.value))}
