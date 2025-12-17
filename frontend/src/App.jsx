@@ -128,8 +128,8 @@ function App() {
         weights,
         // If Full Mode: Force all types to 'inner', else use selected types
         region_types: useFullRegion
-            ? ["inner", "inner", "inner", "inner"]
-            : regionTypes,
+          ? ["inner", "inner", "inner", "inner"]
+          : regionTypes,
         // If Full Mode: Force 100% width/height centered at 0.5
         region_width: useFullRegion ? 1.0 : region.width,
         region_height: useFullRegion ? 1.0 : region.height,
@@ -166,21 +166,17 @@ function App() {
     const ac = new AbortController();
     beamAbortControllerRef.current = ac;
 
-    const timer = setTimeout(async () => {
+    (async () => {
       try {
-        const res = await simulateBeam(
-            { arrays: beamArrays },
-            { signal: ac.signal }
-        );
-        if (!ac.signal.aborted) {
-          setBeamMap("data:" + res.data.map);
-        }
+        // PARALLEL EXECUTION with NO DELAY
+        // Now that backend is optimized (OpenCV), this will be fast.
+        const [mapRes, profileRes] = await Promise.all([
+          simulateBeam({ arrays: beamArrays }, { signal: ac.signal }),
+          getBeamProfile({ arrays: beamArrays }, { signal: ac.signal }),
+        ]);
 
-        const profileRes = await getBeamProfile(
-            { arrays: beamArrays },
-            { signal: ac.signal }
-        );
         if (!ac.signal.aborted) {
+          setBeamMap("data:" + mapRes.data.map);
           setBeamProfileImg("data:" + profileRes.data.profile);
         }
       } catch (err) {
@@ -188,192 +184,191 @@ function App() {
           console.error("Beam error:", err);
         }
       }
-    }, 150);
+    })();
 
     return () => {
-      clearTimeout(timer);
       ac.abort();
     };
   }, [beamArrays, activeTab]);
 
   return (
-      <div
-          className="app-container"
-          style={{
-            fontFamily: "Arial, sans-serif",
-            height: "100vh",
-            display: "flex",
-            flexDirection: "column",
-            background: "#0f0f12",
-            color: "#eee",
-          }}
+    <div
+      className="app-container"
+      style={{
+        fontFamily: "Arial, sans-serif",
+        height: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        background: "#0f0f12",
+        color: "#eee",
+      }}
+    >
+      <nav
+        style={{
+          padding: "15px",
+          background: "#1a1a1d",
+          color: "white",
+          display: "flex",
+          gap: "20px",
+          alignItems: "center",
+        }}
       >
-        <nav
-            style={{
-              padding: "15px",
-              background: "#1a1a1d",
-              color: "white",
-              display: "flex",
-              gap: "20px",
-              alignItems: "center",
-            }}
+        <h2 style={{ margin: 0, color: "#c5a059" }}>DSP Task 4</h2>
+        <button
+          onClick={() => setActiveTab("mixer")}
+          disabled={activeTab === "mixer"}
+          style={{
+            padding: "6px 12px",
+            background: activeTab === "mixer" ? "#c5a059" : "#333",
+            color: activeTab === "mixer" ? "#000" : "#ccc",
+            border: "1px solid #555",
+          }}
         >
-          <h2 style={{ margin: 0, color: "#c5a059" }}>DSP Task 4</h2>
-          <button
-              onClick={() => setActiveTab("mixer")}
-              disabled={activeTab === "mixer"}
+          FT Mixer
+        </button>
+        <button
+          onClick={() => setActiveTab("beamforming")}
+          disabled={activeTab === "beamforming"}
+          style={{
+            padding: "6px 12px",
+            background: activeTab === "beamforming" ? "#d32f2f" : "#333",
+            color: activeTab === "beamforming" ? "#fff" : "#ccc",
+            border: "1px solid #555",
+          }}
+        >
+          Beamforming
+        </button>
+      </nav>
+
+      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+        {activeTab === "mixer" ? (
+          <>
+            <div
               style={{
-                padding: "6px 12px",
-                background: activeTab === "mixer" ? "#c5a059" : "#333",
-                color: activeTab === "mixer" ? "#000" : "#ccc",
-                border: "1px solid #555",
+                flex: 2,
+                padding: "20px",
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "10px",
+                overflowY: "auto",
               }}
-          >
-            FT Mixer
-          </button>
-          <button
-              onClick={() => setActiveTab("beamforming")}
-              disabled={activeTab === "beamforming"}
-              style={{
-                padding: "6px 12px",
-                background: activeTab === "beamforming" ? "#d32f2f" : "#333",
-                color: activeTab === "beamforming" ? "#fff" : "#ccc",
-                border: "1px solid #555",
-              }}
-          >
-            Beamforming
-          </button>
-        </nav>
-
-        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-          {activeTab === "mixer" ? (
-              <>
-                <div
-                    style={{
-                      flex: 2,
-                      padding: "20px",
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: "10px",
-                      overflowY: "auto",
-                    }}
-                >
-                  {imageIds.map((imgId, idx) => (
-                      <ImageViewer
-                          key={idx}
-                          id={idx}
-                          imageId={imgId}
-                          onUpload={handleUpload}
-                          region={region}
-                          setRegion={setRegion}
-                          regionType={regionTypes[idx]}
-                          setRegionType={(newType) => {
-                            const newTypes = [...regionTypes];
-                            newTypes[idx] = newType;
-                            setRegionTypes(newTypes);
-                          }}
-                          // PASS PROP: Control visibility of rectangle
-                          useFullRegion={useFullRegion}
-                      />
-                  ))}
-                </div>
-
-                <div
-                    style={{
-                      width: "300px",
-                      backgroundColor: "#141418",
-                      overflowY: "auto",
-                    }}
-                >
-                  <MixerControls
-                      weights={weights}
-                      setWeights={setWeights}
-                      region={region}
-                      setRegion={setRegion}
-                      regionTypes={regionTypes}
-                      mixMode={mixMode}
-                      setMixMode={setMixMode}
-                      onProcess={handleMix}
-                      isProcessing={isProcessing}
-                      // PASS PROPS: Pass control to MixerControls so you can add a button
-                      useFullRegion={useFullRegion}
-                      setUseFullRegion={setUseFullRegion}
-                  />
-                </div>
-
-                <div
-                    style={{
-                      flex: 1,
-                      padding: "10px",
-                      background: "#0a0a0c",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "20px",
-                    }}
-                >
-                  <OutputViewer
-                      id={1}
-                      imageSrc={output1}
-                      isSelected={selectedPort === 1}
-                      onSelect={() => setSelectedPort(1)}
-                  />
-                  <OutputViewer
-                      id={2}
-                      imageSrc={output2}
-                      isSelected={selectedPort === 2}
-                      onSelect={() => setSelectedPort(2)}
-                  />
-                </div>
-              </>
-          ) : (
-              <>
-                <ArrayConfig
-                    arrays={beamArrays}
-                    setArrays={setBeamArrays}
-                    activeArrayIndex={activeArrayIndex}
-                    setActiveArrayIndex={setActiveArrayIndex}
-                    selectedAntennaIndex={selectedAntennaIndex}
-                    setSelectedAntennaIndex={setSelectedAntennaIndex}
+            >
+              {imageIds.map((imgId, idx) => (
+                <ImageViewer
+                  key={idx}
+                  id={idx}
+                  imageId={imgId}
+                  onUpload={handleUpload}
+                  region={region}
+                  setRegion={setRegion}
+                  regionType={regionTypes[idx]}
+                  setRegionType={(newType) => {
+                    const newTypes = [...regionTypes];
+                    newTypes[idx] = newType;
+                    setRegionTypes(newTypes);
+                  }}
+                  // PASS PROP: Control visibility of rectangle
+                  useFullRegion={useFullRegion}
                 />
-                <div
-                    style={{
-                      flex: 1,
-                      display: "flex",
-                      flexDirection: "column",
-                      padding: "10px",
-                      gap: "10px",
-                      overflow: "hidden",
-                    }}
-                >
-                  <div
-                      style={{
-                        flex: 2,
-                        minHeight: 0,
-                        overflow: "hidden",
-                        display: "flex",
-                      }}
-                  >
-                    <InterferenceMap mapImage={beamMap} isLoading={!beamMap} />
-                  </div>
+              ))}
+            </div>
 
-                  <div
-                      style={{
-                        flex: 1.0,
-                        minHeight: 0,
-                        overflow: "hidden",
-                        display: "flex",
-                      }}
-                  >
-                    <BeamProfile
-                        profileImage={beamProfileImg}
-                        isLoading={!beamProfileImg}
-                    />
-                  </div>
-                </div>
-              </>
-          )}
-        </div>
+            <div
+              style={{
+                width: "300px",
+                backgroundColor: "#141418",
+                overflowY: "auto",
+              }}
+            >
+              <MixerControls
+                weights={weights}
+                setWeights={setWeights}
+                region={region}
+                setRegion={setRegion}
+                regionTypes={regionTypes}
+                mixMode={mixMode}
+                setMixMode={setMixMode}
+                onProcess={handleMix}
+                isProcessing={isProcessing}
+                // PASS PROPS: Pass control to MixerControls so you can add a button
+                useFullRegion={useFullRegion}
+                setUseFullRegion={setUseFullRegion}
+              />
+            </div>
+
+            <div
+              style={{
+                flex: 1,
+                padding: "10px",
+                background: "#0a0a0c",
+                display: "flex",
+                flexDirection: "column",
+                gap: "20px",
+              }}
+            >
+              <OutputViewer
+                id={1}
+                imageSrc={output1}
+                isSelected={selectedPort === 1}
+                onSelect={() => setSelectedPort(1)}
+              />
+              <OutputViewer
+                id={2}
+                imageSrc={output2}
+                isSelected={selectedPort === 2}
+                onSelect={() => setSelectedPort(2)}
+              />
+            </div>
+          </>
+        ) : (
+          <>
+            <ArrayConfig
+              arrays={beamArrays}
+              setArrays={setBeamArrays}
+              activeArrayIndex={activeArrayIndex}
+              setActiveArrayIndex={setActiveArrayIndex}
+              selectedAntennaIndex={selectedAntennaIndex}
+              setSelectedAntennaIndex={setSelectedAntennaIndex}
+            />
+            <div
+              style={{
+                flex: 1,
+                display: "flex",
+                flexDirection: "column",
+                padding: "10px",
+                gap: "10px",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  flex: 2,
+                  minHeight: 0,
+                  overflow: "hidden",
+                  display: "flex",
+                }}
+              >
+                <InterferenceMap mapImage={beamMap} isLoading={!beamMap} />
+              </div>
+
+              <div
+                style={{
+                  flex: 1.0,
+                  minHeight: 0,
+                  overflow: "hidden",
+                  display: "flex",
+                }}
+              >
+                <BeamProfile
+                  profileImage={beamProfileImg}
+                  isLoading={!beamProfileImg}
+                />
+              </div>
+            </div>
+          </>
+        )}
       </div>
+    </div>
   );
 }
 

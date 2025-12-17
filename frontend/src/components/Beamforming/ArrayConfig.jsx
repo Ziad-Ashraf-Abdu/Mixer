@@ -576,9 +576,9 @@ const ArrayConfig = ({
                 </div>
                 <input
                   type="range"
-                  min="-5"
-                  max="5"
-                  step="0.05"
+                  min="-20"
+                  max="20"
+                  step="0.1"
                   value={currentAntennaOffset.x}
                   onChange={(e) =>
                     updateAntennaOffset(
@@ -605,9 +605,9 @@ const ArrayConfig = ({
                 </div>
                 <input
                   type="range"
-                  min="-5"
-                  max="5"
-                  step="0.05"
+                  min="0"
+                  max="40"
+                  step="0.1"
                   value={currentAntennaOffset.y}
                   onChange={(e) =>
                     updateAntennaOffset(

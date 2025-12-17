@@ -52,20 +52,14 @@ class PhasedArray:
     def calculate_field_contribution(self, grid_x, grid_y):
         """
         Calculates this array's contribution to the field at grid points.
-        Implementation matches harmonicode repo: 
-        Waves_Sum += frequency_scaling * np.sin(k * R + phase_delay)
         """
         # Steering delay (Progressive phase shift)
         theta_rad = np.radians(self.steering_angle)
-        # Note: In harmonicode, delay is passed in degrees. 
-        # Here we calculate the equivalent radian delay for the given steering angle.
         delay_rad = self.k * self.distance * np.sin(theta_rad)
         
         field_sum = np.zeros_like(grid_x, dtype=np.float64)
         global_pos = self.get_global_positions()
         
-        # Frequency scaling (currently 1.0 as we use single frequency per array)
-        # Matches harmonicode: frequency_scaling = frequency / max_frequency
         frequency_scaling = 1.0 
 
         for i in range(self.num_elements):
@@ -76,7 +70,6 @@ class PhasedArray:
             R = np.sqrt((grid_x - x_pos) ** 2 + (grid_y - y_pos) ** 2)
             
             # Phase = k*R + steering_phase
-            # Matches harmonicode: phase_delay = -i * delay_rad
             phase_val = self.k * R + (-i * delay_rad)
             
             # Superposition with frequency scaling
@@ -87,8 +80,6 @@ class PhasedArray:
     def get_beam_profile(self, start_angle=0, end_angle=180, points=360):
         """
         Calculates the Array Factor for polar plotting.
-        Strictly uses self.element_positions to respect manual offsets.
-        Range is 0 to 180 degrees (0 to Pi) to match harmonicode view.
         """
         # Convert range to Radians (0 to Pi)
         azimuth_rad = np.linspace(np.radians(start_angle), np.radians(end_angle), points)
@@ -111,7 +102,6 @@ class PhasedArray:
             theta_elem = np.arctan2(y, x)
             
             # Far-field approximation phase term
-            # Matches harmonicode: -k * r * cos(phi - theta_elem) + phase
             phase_term = -self.k * r_elem * np.cos(azimuth_rad - theta_elem) + phases[i]
             beam_summation += np.exp(1j * phase_term)
 
@@ -119,42 +109,63 @@ class PhasedArray:
 
     def render_polar_plot(self) -> bytes:
         """
-        Generates the polar plot image bytes internally.
-        Matches harmonicode visual style: 0-180 degrees, Up is 90.
+        Generates the polar plot image bytes using OpenCV for high performance.
+        Replaces Matplotlib to enable real-time synchronization.
         """
         angles, magnitude = self.get_beam_profile(0, 180, 360)
         
-        # Plotting
-        fig = plt.figure(figsize=(6, 6), dpi=100)
-        ax = fig.add_subplot(111, polar=True)
+        # Canvas Settings
+        W, H = 600, 400
+        img = np.zeros((H, W, 3), dtype=np.uint8)
+        img[:] = (5, 5, 5) # Dark background #050505
         
-        theta = np.radians(angles)
+        center = (W // 2, H - 30)
+        radius = min(W // 2, H) - 50
         
-        # --- Harmonicode Exact Style Implementation ---
-        # 1. Orientation: Counter-Clockwise
-        ax.set_theta_direction(1)
-        # 2. Offset: 0 is East
-        ax.set_theta_zero_location("E") # Or explicit offset 0
-        ax.set_theta_offset(0)
-        # 3. Limit: Only show top half (0 to Pi)
-        ax.set_xlim([0, np.pi])
-        # 4. Y-Ticks: Hidden
-        ax.set_yticklabels([])
+        # Draw Grid (Semi-circles)
+        for r_scale in [0.25, 0.5, 0.75, 1.0]:
+            r_px = int(radius * r_scale)
+            cv2.ellipse(img, center, (r_px, r_px), 0, 180, 360, (50, 50, 50), 1)
+            
+        # Draw Angle Lines (0 to 180 every 30 deg)
+        for ang_deg in range(0, 181, 30):
+            ang_rad = np.radians(ang_deg)
+            # Polar conversion (0 is East/Right, increasing CCW)
+            x = int(center[0] + radius * np.cos(ang_rad))
+            y = int(center[1] - radius * np.sin(ang_rad))
+            cv2.line(img, center, (x, y), (50, 50, 50), 1)
+            
+            # Simple Labels
+            label_x = int(center[0] + (radius + 15) * np.cos(ang_rad))
+            label_y = int(center[1] - (radius + 15) * np.sin(ang_rad))
+            # cv2.putText(img, str(ang_deg), (label_x-10, label_y+5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
+
+        # Normalize magnitude to fit radius
+        max_mag = np.max(magnitude)
+        if max_mag > 0:
+            norm_mag = magnitude / max_mag
+        else:
+            norm_mag = magnitude
+
+        # Convert profile to points
+        pts = []
+        for a_deg, m in zip(angles, norm_mag):
+            a_rad = np.radians(a_deg)
+            r_px = int(m * radius)
+            x = int(center[0] + r_px * np.cos(a_rad))
+            y = int(center[1] - r_px * np.sin(a_rad))
+            pts.append([x, y])
+            
+        pts = np.array(pts, np.int32)
+        pts = pts.reshape((-1, 1, 2))
         
-        ax.plot(theta, magnitude, color='#00FFFF', linewidth=2.5)
+        # Draw Profile Line (Cyan)
+        cv2.polylines(img, [pts], False, (255, 255, 0), 2)
         
-        # Dark Theme
-        fig.patch.set_facecolor('#050505')
-        ax.set_facecolor('#111')
-        ax.tick_params(axis='x', colors='white', labelsize=10)
-        ax.spines['polar'].set_visible(False)
-        ax.grid(color='gray', linestyle=':', alpha=0.3)
-        
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight', facecolor=fig.get_facecolor())
-        plt.close(fig)
-        buf.seek(0)
-        return buf.read()
+        success, buffer = cv2.imencode('.png', img)
+        if not success:
+            raise ValueError("Could not encode image")
+        return buffer.tobytes()
 
 
 class BeamSystem:
@@ -191,7 +202,6 @@ class BeamSystem:
         log_field = np.log1p(abs_field)
         
         # Normalize to 0-255
-        # (val - min) / (max - min) * 255
         f_min, f_max = np.min(log_field), np.max(log_field)
         if f_max - f_min == 0:
             norm = np.zeros_like(log_field, dtype=np.uint8)
@@ -201,7 +211,6 @@ class BeamSystem:
         colored = cv2.applyColorMap(norm, cv2.COLORMAP_JET)
         
         # Flip Y (physically bottom is Y=0, image top is row 0)
-        # This aligns with harmonicode's origin="lower"
         colored = cv2.flip(colored, 0)
         
         # Draw Arrays
