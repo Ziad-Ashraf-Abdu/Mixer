@@ -98,7 +98,6 @@ async def get_component_view(
         image = repo.get(req.id)
         raw_data = image.get_component_data(req.type_str)
         
-        # FIXED: Use injected encoder instance instead of static method
         img_bytes = encoder.encode(raw_data)
         
         return to_base64_response(img_bytes, "image")
@@ -115,7 +114,6 @@ async def mix_request(
     try:
         images = repo.get_all()
         
-        # Use injected mixer service
         result_data = mixer.mix_images_per_type(
             images=images,
             weights=data.weights,
@@ -127,7 +125,6 @@ async def mix_request(
             mode=data.mix_mode
         )
         
-        # Use injected encoder
         img_bytes = encoder.encode(result_data)
         
         return to_base64_response(img_bytes, "image")
@@ -135,8 +132,6 @@ async def mix_request(
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- BEAMFORMING ENDPOINTS ---
-# Note: BeamSystem is not yet refactored into the DI container as per Phase 1,
-# but it could be added similarly later.
 
 @app.post("/simulate_beam")
 async def beam_request(config: BeamRequest):
@@ -155,6 +150,10 @@ async def beam_request(config: BeamRequest):
             array.set_steering(arr_cfg['steering'])
             if 'antennaOffsets' in arr_cfg:
                 array.apply_offsets(arr_cfg['antennaOffsets'])
+            
+            # NEW: Apply individual frequency multipliers
+            if 'antennaFrequencies' in arr_cfg:
+                array.set_frequency_multipliers(arr_cfg['antennaFrequencies'])
                 
             system.add_array(array)
 
@@ -182,6 +181,10 @@ async def get_beam_profile(config: BeamRequest):
         array.set_steering(arr_cfg['steering'])
         if 'antennaOffsets' in arr_cfg:
             array.apply_offsets(arr_cfg['antennaOffsets'])
+            
+        # NEW: Apply individual frequency multipliers
+        if 'antennaFrequencies' in arr_cfg:
+            array.set_frequency_multipliers(arr_cfg['antennaFrequencies'])
             
         img_bytes = array.render_polar_plot()
         return to_base64_response(img_bytes, "profile")

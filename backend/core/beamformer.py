@@ -20,6 +20,11 @@ class PhasedArray:
         self.distance = self.wavelength * spacing_factor
         
         self.steering_angle = 0
+        
+        # Initialize frequency multipliers (defaults to 1.0)
+        self.freq_multipliers = np.ones(num_elements, dtype=np.float64)
+
+        # Generate positions MUST happen after geometry is set
         self.element_positions = self._generate_local_positions()
 
     def _generate_local_positions(self):
@@ -27,8 +32,11 @@ class PhasedArray:
         x_pos = np.linspace(-span / 2, span / 2, self.num_elements)
         
         baseline_y = 0.2
-        if self.geometry == 'curved' or self.curvature > 0:
-            # Curvature calculation logic
+        
+        # FIX: Strict check. Only apply curvature if mode is actually 'curved'.
+        # Previously "or self.curvature > 0" caused linear mode to appear curved
+        # if the slider had a value.
+        if self.geometry == 'curved':
             y_pos = baseline_y + self.curvature * (x_pos ** 2)
         else:
             y_pos = np.full_like(x_pos, 0)
@@ -42,6 +50,12 @@ class PhasedArray:
             if 0 <= idx < len(self.element_positions):
                 self.element_positions[idx, 0] += offset.get('x', 0)
                 self.element_positions[idx, 1] += offset.get('y', 0)
+    
+    def set_frequency_multipliers(self, freq_map: dict):
+        for idx_str, mult in freq_map.items():
+            idx = int(idx_str)
+            if 0 <= idx < self.num_elements:
+                self.freq_multipliers[idx] = float(mult)
 
     def set_steering(self, angle_deg):
         self.steering_angle = angle_deg
@@ -52,34 +66,46 @@ class PhasedArray:
     def calculate_field_contribution(self, grid_x, grid_y):
         """
         Calculates this array's contribution to the field at grid points.
+        Vectorized for performance. Supports individual frequencies.
         """
-        # Steering delay (Progressive phase shift)
+        # Steering delay (Progressive phase shift based on base frequency)
         theta_rad = np.radians(self.steering_angle)
         delay_rad = self.k * self.distance * np.sin(theta_rad)
         
-        field_sum = np.zeros_like(grid_x, dtype=np.float64)
         global_pos = self.get_global_positions()
         
-        frequency_scaling = 1.0 
-
-        for i in range(self.num_elements):
-            x_pos = global_pos[i, 0]
-            y_pos = global_pos[i, 1]
-            
-            # Distance from element to grid point
-            R = np.sqrt((grid_x - x_pos) ** 2 + (grid_y - y_pos) ** 2)
-            
-            # Phase = k*R + steering_phase
-            phase_val = self.k * R + (-i * delay_rad)
-            
-            # Superposition with frequency scaling
-            field_sum += frequency_scaling * np.sin(phase_val)
-
+        # Expand dimensions for broadcasting: 
+        # Elements (N, 1, 1) vs Grid (1, H, W)
+        x_elements = global_pos[:, 0][:, np.newaxis, np.newaxis]
+        y_elements = global_pos[:, 1][:, np.newaxis, np.newaxis]
+        
+        gx = grid_x[np.newaxis, :, :]
+        gy = grid_y[np.newaxis, :, :]
+        
+        # Calculate Distances for all elements to all points at once
+        R = np.sqrt((gx - x_elements) ** 2 + (gy - y_elements) ** 2)
+        
+        # Phase indices [0, 1, ... N]
+        indices = np.arange(self.num_elements)[:, np.newaxis, np.newaxis]
+        steering_phases = -indices * delay_rad
+        
+        # Vectorized K for individual frequencies
+        # Shape (N,) -> (N, 1, 1)
+        k_vec = self.k * self.freq_multipliers
+        k_vec = k_vec[:, np.newaxis, np.newaxis]
+        
+        # Total phase = k_local * R + steering_phase
+        phases = k_vec * R + steering_phases
+        
+        # Sum sin(phases) across all elements (axis 0)
+        field_sum = np.sum(np.sin(phases), axis=0)
+        
         return field_sum
 
     def get_beam_profile(self, start_angle=0, end_angle=180, points=360):
         """
         Calculates the Array Factor for polar plotting.
+        Updated to support individual frequencies.
         """
         # Convert range to Radians (0 to Pi)
         azimuth_rad = np.linspace(np.radians(start_angle), np.radians(end_angle), points)
@@ -89,6 +115,9 @@ class PhasedArray:
         theta_steer = np.radians(self.steering_angle)
         delay_rad = self.k * self.distance * np.sin(theta_steer)
         phases = np.array([-i * delay_rad for i in range(self.num_elements)])
+        
+        # Local K vector
+        k_vec = self.k * self.freq_multipliers
         
         beam_summation = np.zeros_like(azimuth_rad, dtype=np.complex128)
 
@@ -101,8 +130,8 @@ class PhasedArray:
             r_elem = np.sqrt(x**2 + y**2)
             theta_elem = np.arctan2(y, x)
             
-            # Far-field approximation phase term
-            phase_term = -self.k * r_elem * np.cos(azimuth_rad - theta_elem) + phases[i]
+            # Far-field approximation phase term with INDIVIDUAL K
+            phase_term = -k_vec[i] * r_elem * np.cos(azimuth_rad - theta_elem) + phases[i]
             beam_summation += np.exp(1j * phase_term)
 
         return angles_deg, np.abs(beam_summation)
@@ -110,7 +139,6 @@ class PhasedArray:
     def render_polar_plot(self) -> bytes:
         """
         Generates the polar plot image bytes using OpenCV for high performance.
-        Replaces Matplotlib to enable real-time synchronization.
         """
         angles, magnitude = self.get_beam_profile(0, 180, 360)
         
@@ -135,11 +163,6 @@ class PhasedArray:
             y = int(center[1] - radius * np.sin(ang_rad))
             cv2.line(img, center, (x, y), (50, 50, 50), 1)
             
-            # Simple Labels
-            label_x = int(center[0] + (radius + 15) * np.cos(ang_rad))
-            label_y = int(center[1] - (radius + 15) * np.sin(ang_rad))
-            # cv2.putText(img, str(ang_deg), (label_x-10, label_y+5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
-
         # Normalize magnitude to fit radius
         max_mag = np.max(magnitude)
         if max_mag > 0:

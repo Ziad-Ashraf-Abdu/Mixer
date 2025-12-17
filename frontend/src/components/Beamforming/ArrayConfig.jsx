@@ -22,13 +22,14 @@ const ArrayConfig = ({
       ...prev,
       {
         count: 16,
-        geo: "linear", // DEFAULT: Linear
+        geo: "linear",
         curve: 0,
         steering: 0,
-        spacing: 0.5, // NEW: Default spacing (lambda/2)
+        spacing: 0.5,
         x: 0,
         y: 0,
         antennaOffsets: {},
+        antennaFrequencies: {}, // NEW: Store frequency multipliers
         id: Date.now(),
       },
     ]);
@@ -63,16 +64,34 @@ const ArrayConfig = ({
     );
   };
 
+  // NEW: Update frequency multiplier for specific antenna
+  const updateAntennaFreq = (antennaIdx, value) => {
+    setArrays((prev) =>
+      prev.map((a, i) => {
+        if (i !== activeArrayIndex) return a;
+        const freqs = { ...a.antennaFrequencies };
+        freqs[antennaIdx] = value;
+        return { ...a, antennaFrequencies: freqs };
+      })
+    );
+  };
+
   const loadScenario = (name) => {
     setActiveScenario(name);
-    const base = { id: Date.now(), antennaOffsets: {}, spacing: 0.5 };
+    // Base object now includes antennaFrequencies
+    const base = {
+      id: Date.now(),
+      antennaOffsets: {},
+      antennaFrequencies: {},
+      spacing: 0.5,
+    };
 
     if (name === "5G") {
       setArrays([
         {
           ...base,
           count: 32,
-          geo: "linear", // FIXED: Linear default
+          geo: "linear",
           curve: 0,
           steering: 30,
           x: 0,
@@ -84,8 +103,8 @@ const ArrayConfig = ({
         {
           ...base,
           count: 64,
-          geo: "linear", // FIXED: Linear default
-          curve: 0, // Start with 0, user can adjust
+          geo: "linear",
+          curve: 0,
           steering: 0,
           x: 0,
           y: 0,
@@ -96,8 +115,8 @@ const ArrayConfig = ({
         {
           ...base,
           count: 16,
-          geo: "linear", // FIXED: Linear default
-          curve: 0, // Start with 0, user can adjust
+          geo: "linear",
+          curve: 0,
           steering: 0,
           x: 0,
           y: 0,
@@ -109,10 +128,17 @@ const ArrayConfig = ({
   };
 
   const current = arrays[activeArrayIndex] || {};
+
   const currentAntennaOffset =
     selectedAntennaIndex !== null
       ? current.antennaOffsets?.[selectedAntennaIndex] || { x: 0, y: 0 }
       : { x: 0, y: 0 };
+
+  // NEW: Get current frequency multiplier (default 1.0)
+  const currentFreqMult =
+    selectedAntennaIndex !== null
+      ? current.antennaFrequencies?.[selectedAntennaIndex] || 1.0
+      : 1.0;
 
   const btnStyle = (isActive) => ({
     flex: 1,
@@ -309,13 +335,13 @@ const ArrayConfig = ({
               <input
                 type="range"
                 min="2"
-                max="128"
+                max="64" // Max limited to 64 as requested
                 value={current.count}
                 onChange={(e) => updateArray("count", parseInt(e.target.value))}
               />
             </div>
 
-            {/* NEW: Antenna Spacing */}
+            {/* Antenna Spacing */}
             <div style={{ marginBottom: "10px" }}>
               <div
                 style={{
@@ -559,8 +585,10 @@ const ArrayConfig = ({
                   textAlign: "center",
                 }}
               >
-                Antenna #{selectedAntennaIndex + 1} Offset
+                Antenna #{selectedAntennaIndex + 1} Config
               </div>
+
+              {/* Position Offsets */}
               <div style={{ fontSize: "0.65rem", marginBottom: "5px" }}>
                 <div
                   style={{
@@ -590,7 +618,7 @@ const ArrayConfig = ({
                   style={{ width: "100%" }}
                 />
               </div>
-              <div style={{ fontSize: "0.65rem" }}>
+              <div style={{ fontSize: "0.65rem", marginBottom: "8px" }}>
                 <div
                   style={{
                     display: "flex",
@@ -619,10 +647,48 @@ const ArrayConfig = ({
                   style={{ width: "100%" }}
                 />
               </div>
+
+              {/* NEW: Frequency Multiplier */}
+              <div
+                style={{
+                  fontSize: "0.65rem",
+                  padding: "5px",
+                  borderTop: "1px dashed #444",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    color: "#aaa",
+                  }}
+                >
+                  <span>Frequency:</span>
+                  <span style={{ color: "#00ffff" }}>
+                    {currentFreqMult.toFixed(2)}x
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="3.0"
+                  step="0.1"
+                  value={currentFreqMult}
+                  onChange={(e) =>
+                    updateAntennaFreq(
+                      selectedAntennaIndex,
+                      parseFloat(e.target.value)
+                    )
+                  }
+                  style={{ width: "100%" }}
+                />
+              </div>
+
               <button
                 onClick={() => {
                   updateAntennaOffset(selectedAntennaIndex, "x", 0);
                   updateAntennaOffset(selectedAntennaIndex, "y", 0);
+                  updateAntennaFreq(selectedAntennaIndex, 1.0);
                 }}
                 style={{
                   width: "100%",
@@ -636,7 +702,7 @@ const ArrayConfig = ({
                   fontFamily: "Cinzel",
                 }}
               >
-                RESET POSITION
+                RESET CONFIG
               </button>
             </div>
           ) : (

@@ -156,38 +156,41 @@ function App() {
     }
   };
 
-  // --- Beamforming Effect ---
+  // --- Beamforming Effect (Debounced) ---
   useEffect(() => {
     if (activeTab !== "beamforming") return;
 
-    if (beamAbortControllerRef.current) {
-      beamAbortControllerRef.current.abort();
-    }
-    const ac = new AbortController();
-    beamAbortControllerRef.current = ac;
-
-    (async () => {
-      try {
-        // PARALLEL EXECUTION with NO DELAY
-        // Now that backend is optimized (OpenCV), this will be fast.
-        const [mapRes, profileRes] = await Promise.all([
-          simulateBeam({ arrays: beamArrays }, { signal: ac.signal }),
-          getBeamProfile({ arrays: beamArrays }, { signal: ac.signal }),
-        ]);
-
-        if (!ac.signal.aborted) {
-          setBeamMap("data:" + mapRes.data.map);
-          setBeamProfileImg("data:" + profileRes.data.profile);
-        }
-      } catch (err) {
-        if (err.name !== "AbortError" && err.code !== "ERR_CANCELED") {
-          console.error("Beam error:", err);
-        }
+    // Debounce: Wait 30ms after the last change before making the request
+    const timerId = setTimeout(() => {
+      // Cancel previous running request if any
+      if (beamAbortControllerRef.current) {
+        beamAbortControllerRef.current.abort();
       }
-    })();
+      const ac = new AbortController();
+      beamAbortControllerRef.current = ac;
 
+      (async () => {
+        try {
+          const [mapRes, profileRes] = await Promise.all([
+            simulateBeam({ arrays: beamArrays }, { signal: ac.signal }),
+            getBeamProfile({ arrays: beamArrays }, { signal: ac.signal }),
+          ]);
+
+          if (!ac.signal.aborted) {
+            setBeamMap("data:" + mapRes.data.map);
+            setBeamProfileImg("data:" + profileRes.data.profile);
+          }
+        } catch (err) {
+          if (err.name !== "AbortError" && err.code !== "ERR_CANCELED") {
+            console.error("Beam error:", err);
+          }
+        }
+      })();
+    }, 30); // 30ms debounce delay
+
+    // Cleanup: If user moves slider again before 30ms, clear the timeout
     return () => {
-      ac.abort();
+      clearTimeout(timerId);
     };
   }, [beamArrays, activeTab]);
 
