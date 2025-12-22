@@ -147,7 +147,7 @@ async def beam_request(config: BeamRequest):
                 spacing_factor=arr_cfg.get('spacing', 0.5)
             )
             
-            array.set_steering(arr_cfg['steering'])
+            array.steering_angle = arr_cfg['steering']
             if 'antennaOffsets' in arr_cfg:
                 array.apply_offsets(arr_cfg['antennaOffsets'])
             
@@ -178,7 +178,7 @@ async def get_beam_profile(config: BeamRequest):
             spacing_factor=arr_cfg.get('spacing', 0.5)
         )
         
-        array.set_steering(arr_cfg['steering'])
+        array.steering_angle = arr_cfg['steering']
         if 'antennaOffsets' in arr_cfg:
             array.apply_offsets(arr_cfg['antennaOffsets'])
             
