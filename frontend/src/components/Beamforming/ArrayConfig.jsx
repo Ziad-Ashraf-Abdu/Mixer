@@ -90,7 +90,7 @@ const ArrayConfig = ({
       setArrays([
         {
           ...base,
-          count: 32,
+          count: 64, //ranges from 64 to 256
           geo: "linear",
           curve: 0,
           steering: 30,
@@ -102,7 +102,7 @@ const ArrayConfig = ({
       setArrays([
         {
           ...base,
-          count: 64,
+          count: 128, //ranges from 128 to 256
           geo: "linear",
           curve: 0,
           steering: 0,
@@ -114,7 +114,7 @@ const ArrayConfig = ({
       setArrays([
         {
           ...base,
-          count: 16,
+          count: 100, //ranges from 100 to 1000
           geo: "linear",
           curve: 0,
           steering: 0,
@@ -335,7 +335,7 @@ const ArrayConfig = ({
               <input
                 type="range"
                 min="2"
-                max="64" // Max limited to 64 as requested
+                max="128" //
                 value={current.count}
                 onChange={(e) => updateArray("count", parseInt(e.target.value))}
               />

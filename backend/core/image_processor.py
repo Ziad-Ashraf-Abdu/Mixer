@@ -24,14 +24,36 @@ class ImageModel:
         fft_full = np.fft.fft2(self.original)
         self.fft_shifted = np.fft.fftshift(fft_full)
         
-        self.magnitude = np.abs(self.fft_shifted)
-        self.phase = np.angle(self.fft_shifted)
-        self.real = np.real(self.fft_shifted)
-        self.imag = np.imag(self.fft_shifted)
+        self._magnitude = np.abs(self.fft_shifted)
+        self._phase = np.angle(self.fft_shifted)
+        self._real = np.real(self.fft_shifted)
+        self._imag = np.imag(self.fft_shifted)
+
+    @property
+    def magnitude(self) -> np.ndarray:
+        """Raw magnitude spectrum (non-negative float array)."""
+        return self._magnitude
+
+    @property
+    def magnitude_db(self) -> np.ndarray:
+        """Log-magnitude in decibels (20 * log10(magnitude + 1e-9))."""
+        return 20 * np.log10(self._magnitude + 1e-9)
+
+    @property
+    def phase(self) -> np.ndarray:
+        return self._phase
+
+    @property
+    def real(self) -> np.ndarray:
+        return self._real
+
+    @property
+    def imag(self) -> np.ndarray:
+        return self._imag
 
     def get_component_data(self, type_str: str) -> np.ndarray:
         if type_str == 'Magnitude':
-            return 20 * np.log(self.magnitude + 1e-9)
+            return self.magnitude_db
         elif type_str == 'Phase':
             return self.phase
         elif type_str == 'Real':
@@ -40,6 +62,7 @@ class ImageModel:
             return self.imag
         else:
             return self.original
+
 
 class PNGEncoder(IImageEncoder):
     """
@@ -61,12 +84,13 @@ class PNGEncoder(IImageEncoder):
             raise ValueError("Could not encode image to PNG")
         return buffer.tobytes()
 
+
 class MixerService(IMixerService):
     """
     Service class encapsulating the business logic for image mixing.
     """
     def mix_images_per_type(self, 
-                            images: list[ImageModel], 
+                            images: list['ImageModel'], 
                             weights: list[dict],
                             region_types: list[str],
                             region_width: float,
@@ -80,7 +104,6 @@ class MixerService(IMixerService):
 
         shape = images[0].shape
         
-        # Create mask for each image based on its region type
         masks = [
             self._create_mask(
                 shape, 
@@ -100,7 +123,6 @@ class MixerService(IMixerService):
         else:
             raise ValueError("Invalid mix mode")
 
-        # Inverse FFT
         fft_unshifted = np.fft.ifftshift(result_fft)
         reconstructed = np.fft.ifft2(fft_unshifted)
         return np.abs(reconstructed)
