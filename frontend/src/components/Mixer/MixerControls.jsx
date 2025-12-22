@@ -55,6 +55,7 @@ const MixerControls = ({
         fontFamily: "Lato",
         marginTop: "2px", // Tight spacing
     };
+
     const isMagPhase = mixMode === "mag-phase";
 
     return (
@@ -175,7 +176,8 @@ const MixerControls = ({
                             background: "rgba(0,0,0,0.4)",
                             padding: "6px", // Reduced padding inside items
                             borderLeft: "2px solid #c5a059",
-                            opacity: useFullRegion ? 0.6 : 1,
+                            // UPDATED: Removed opacity condition so controls always look active
+                            opacity: 1,
                             transition: "opacity 0.3s",
                             pointerEvents: "auto",
                         }}
